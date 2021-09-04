@@ -68,7 +68,7 @@ val step
     : systemState
 
 let step exec pre_state =
-    let instruction = nth pre_state.registers.pc pre_state.memory in
+    let instruction = nth pre_state.memory pre_state.registers.pc in
         match instruction with
         | Blinded _ -> pre_state
         | Clear inst -> exec inst pre_state
