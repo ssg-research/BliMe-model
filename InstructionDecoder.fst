@@ -232,6 +232,8 @@ let decoding_execution_unit_is_redacting_equivalent_somewhere (d:decoder) (s:ins
     Lemma (ensures (equiv_system (decoding_execution_unit d s inst pre)
                                  (decoding_execution_unit d s inst (redact_system pre))))
           [SMTPat (trigger d s inst pre)] =
+
+    (* Start by naming the intermediate values in the evaluations. *)
     let decoded = d inst in
     let pre_redacted = redact_system pre in
 
@@ -245,46 +247,63 @@ let decoding_execution_unit_is_redacting_equivalent_somewhere (d:decoder) (s:ins
     let raw_post_state_redacted = (set_operands decoded.output_operands redacted_output_operand_values pre_redacted) in
     let post_state_redacted = decoding_execution_unit d s inst pre_redacted in
 
-    lists_are_equivalent_to_their_redaction _ input_operand_values 0;
+    (* First, show that the inputs operand values are equivalent, and so that
+       they have the same "any-blindedness", which is to say that redaction
+       does not affect the taintness of the inputs (or so the outputs).
+     *)
     get_operands_on_redacted_input_has_equivalent_output decoded.input_operands pre;
     assert(equiv_list input_operand_values redacted_input_operand_values);
     equivalent_memories_have_identical_any_blindedness input_operand_values redacted_input_operand_values;
-
     assert((any_value_is_blinded input_operand_values) = (any_value_is_blinded redacted_input_operand_values));
 
-    assert(equiv_list input_operand_values redacted_input_operand_values);
+    (* We continue by looking at each branch of the evaluation. *)
 
+    (* First, if none of the inputs are blinded. *)
     if not (any_value_is_blinded (input_operand_values)) then (
-      assert(equiv_list input_operand_values redacted_input_operand_values);
+
+      (* Since the input values are unblinded and equivalent, they must
+         be equal, and therefore so must be the output values.
+       *)
       equivalent_unblinded_lists_are_equal input_operand_values redacted_input_operand_values;
       assert(input_operand_values = redacted_input_operand_values);
       assert(output_operand_values = redacted_output_operand_values);
-      assert(post_state          = (set_operands decoded.output_operands output_operand_values pre));
-      assert(post_state_redacted = (set_operands decoded.output_operands redacted_output_operand_values pre_redacted));
 
+
+      (* Just because the outputs of the computation are the same, doesn't mean
+         that the output state is, since there may be other blinded values
+         in the memory or registers.
+       *)
+
+      (* First show that the pre-instruction states are equivalent. *)
       systems_are_equivalent_to_their_redaction pre;
+
+      (* Then show that writing the results to these equivalent states leads
+         to an equivalent output state.
+       *)
       equal_lists_are_equivalent _ output_operand_values redacted_output_operand_values;
-      setting_equivalent_operand_values_on_equivalent_systems_yields_equivalent_systems decoded.output_operands output_operand_values redacted_output_operand_values pre pre_redacted;
+      setting_equivalent_operand_values_on_equivalent_systems_yields_equivalent_systems
+        decoded.output_operands output_operand_values redacted_output_operand_values pre pre_redacted;
 
       assert(equiv_system post_state post_state_redacted)
+
+    (* Next, we consider the case where there is at least one blinded input. *)
     ) else (
 
-      assert(any_value_is_blinded input_operand_values);
+      (* Since an input value is blinded, so will be the outputs. *)
+      let blinded_output_values = blind_all_values output_operand_values in
+      let blinded_output_values_redacted = blind_all_values redacted_output_operand_values in
 
-      assert(post_state = set_operands decoded.output_operands (blind_all_values output_operand_values) pre);
-      assert(post_state_redacted = set_operands decoded.output_operands (blind_all_values redacted_output_operand_values) pre_redacted);
+      (* But since the outputs are all blinded, they must all be equivalent. *)
+      assert(FStar.List.length blinded_output_values = FStar.List.length blinded_output_values_redacted);
+      assert(all_values_are_blinded _ blinded_output_values);
+      assert(all_values_are_blinded _ blinded_output_values_redacted);
+      lists_of_blinded_values_of_equal_length_are_equivalent _ blinded_output_values blinded_output_values_redacted;
 
-      let blinded1 = blind_all_values output_operand_values in
-      let blinded2 = blind_all_values redacted_output_operand_values in
-
-      assert(FStar.List.length blinded1 = FStar.List.length blinded2);
-      assert(all_values_are_blinded _ blinded1);
-      assert(all_values_are_blinded _ blinded2);
-      lists_of_blinded_values_of_equal_length_are_equivalent _ blinded1 blinded2;
-
+      (* As before, we must finally show that writing these equivalent values
+         to equivalent states result in equivalent final states. *)
       systems_are_equivalent_to_their_redaction pre;
 
-      setting_equivalent_operand_values_on_equivalent_systems_yields_equivalent_systems decoded.output_operands blinded1 blinded2 pre pre_redacted
+      setting_equivalent_operand_values_on_equivalent_systems_yields_equivalent_systems decoded.output_operands blinded_output_values blinded_output_values_redacted pre pre_redacted
     )
 
 let decoding_execution_unit_is_redacting_equivalent (d:decoder) (s:instruction_semantics):
