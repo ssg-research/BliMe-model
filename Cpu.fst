@@ -1,56 +1,63 @@
 (* Top-level CPU model *)
 module Cpu
 
-open InstructionDecoder
 open Memory
 open Value
 
 type address = nat
 type word = byte
 
-type registerFile
-     = { pc: address; value: maybeBlinded #word }
-
 type systemState
-     = { memory: memoryState; registers:registerFile  }
+     = { memory: memoryState;
+             pc: (pc:nat{pc < FStar.List.length memory});
+      registers: memoryState}
 
 (* Equivalence *)
 let equiv_system (lhs:systemState) (rhs:systemState)
-    =    (lhs.registers.pc = rhs.registers.pc)
-       /\ (equiv  lhs.registers.value rhs.registers.value)
+    =    (lhs.pc = rhs.pc)
+       /\ (equiv_list lhs.registers rhs.registers)
        /\ (equiv_list lhs.memory rhs.memory)
+
+let equal_systems_are_equivalent (lhs:systemState) (rhs:systemState):
+  Lemma (requires lhs = rhs) (ensures (equiv_system lhs rhs)) =
+  equal_lists_are_equivalent _ lhs.registers rhs.registers;
+  equal_lists_are_equivalent _ lhs.memory rhs.memory
 
 let system_equivalence_is_transitive (lhs mid rhs:systemState):
     Lemma (requires (equiv_system lhs mid) /\ (equiv_system mid rhs))
           (ensures  equiv_system lhs rhs)
-    = assert(lhs.registers.pc = rhs.registers.pc);
-      equivalence_is_transitive      _ lhs.registers.value mid.registers.value rhs.registers.value;
+    = assert(lhs.pc = rhs.pc);
+      list_equivalence_is_transitive _ lhs.registers mid.registers rhs.registers;
       list_equivalence_is_transitive _ lhs.memory          mid.memory          rhs.memory
 
 let system_equivalence_is_symmetric (lhs rhs:systemState):
     Lemma (requires equiv_system lhs rhs)
           (ensures  equiv_system rhs lhs)
-    = assert(lhs.registers.pc = rhs.registers.pc);
-      equivalence_is_symmetric _ lhs.registers.value rhs.registers.value;
+    = assert(lhs.pc = rhs.pc);
+      list_equivalence_is_symmetric _ lhs.registers rhs.registers;
       list_equivalence_is_symmetric _ lhs.memory          rhs.memory
 
 
 (* Redaction *)
 let redact_system (s:systemState): systemState = {
-                                       registers = { s.registers with value = redact s.registers.value 0 };
-                                       memory    = redact_list s.memory 0
-                                   }
+    pc = (redaction_preserves_length _ s.memory 0;
+          let redacted_memory = redact_list s.memory 0 in
+          s.pc);
+    registers = (redaction_preserves_length _ s.registers 0;
+                 redact_list s.registers 0);
+    memory    = redact_list s.memory 0
+    }
 
 
 let systems_are_equivalent_to_their_redaction (s:systemState):
     Lemma (ensures equiv_system s (redact_system s))
-    = values_are_equivalent_to_their_redaction _ s.registers.value 0;
+    = lists_are_equivalent_to_their_redaction  _ s.registers 0;
       lists_are_equivalent_to_their_redaction  _ s.memory 0
 
 let equivalent_systems_have_equal_redactions (s1:systemState) (s2:systemState):
     Lemma (ensures (equiv_system s1 s2) <==> ((redact_system s1) == (redact_system s2)))
-    = equivalent_values_have_equal_redactions _ s1.registers.value s2.registers.value 0;
-      equivalent_lists_have_equal_redactions  _ s1.memory s2.memory 0
+    = equivalent_lists_have_equal_redactions _ s1.registers s2.registers 0;
+      equivalent_lists_have_equal_redactions _ s1.memory s2.memory 0
 
 
 (*******************************************************************************
@@ -68,7 +75,7 @@ val step
     : systemState
 
 let step exec pre_state =
-    let instruction = nth pre_state.memory pre_state.registers.pc in
+    let instruction = Memory.nth pre_state.memory pre_state.pc in
         match instruction with
         | Blinded _ -> pre_state
         | Clear inst -> exec inst pre_state
@@ -96,9 +103,11 @@ type safe_execution_unit = exec:execution_unit{is_safe exec}
  * values zeroed is safe.
  *******************************************************************************)
 
+ let is_redacting_equivalent_execution_unit (exec:execution_unit)
+   = forall(pre:systemState) (inst:word).  (equiv_system (exec inst pre) (exec inst (redact_system pre)))
+
 type redacting_equivalent_execution_unit
-   = exec:execution_unit{
-     forall(pre:systemState) (inst:word).  (equiv_system (exec inst pre) (exec inst (redact_system pre))) }
+   = exec:execution_unit{is_redacting_equivalent_execution_unit exec}
 
 let is_redacting_equivalent_system_single_step_somewhere (exec:execution_unit) (pre:systemState) =
     (equiv_system (step exec pre) (step exec (redact_system pre)))
@@ -111,9 +120,11 @@ let redacting_equivalent_execution_units_lead_to_redacting_equivalent_systems_so
     Lemma (ensures is_redacting_equivalent_system_single_step_somewhere exec pre) =
       let redaction = redact_system pre in
       systems_are_equivalent_to_their_redaction pre;
-      assert(pre.registers.pc = redaction.registers.pc);
-      let pc = pre.registers.pc in
-      equivalent_memories_have_equivalent_values pre.memory redaction.memory pc
+      assert(pre.pc = redaction.pc);
+      let pc = pre.pc in
+      equivalent_memories_have_equivalent_values pre.memory redaction.memory pc;
+      assert(equiv_list pre.memory redaction.memory);
+      assert(equiv (Memory.nth pre.memory pc) (Memory.nth redaction.memory pc))
 
 let redacting_equivalent_systems_give_equivalent_outputs_for_equivalent_inputs
     (exec:redacting_equivalent_execution_unit) (pre_1:systemState) (pre_2:systemState)
@@ -128,6 +139,7 @@ let redacting_equivalent_systems_give_equivalent_outputs_for_equivalent_inputs
         assert( equiv_system (step exec (redact_system pre_2)) (step exec pre_2) );
         system_equivalence_is_transitive (step exec pre_1) (step exec (redact_system pre_1)) (step exec pre_2)
 
+(* The main theorem about execution_units *)
 let redacting_equivalent_execution_units_are_safe
     (exec:redacting_equivalent_execution_unit):
     Lemma (ensures is_safe exec)
