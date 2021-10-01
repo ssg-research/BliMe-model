@@ -2,7 +2,7 @@ module Memory
 
 open Value
 
-type byte = b:int{0 >= b /\ b < 256}
+type byte = nat
 
 type memoryState = list (maybeBlinded #byte)
 

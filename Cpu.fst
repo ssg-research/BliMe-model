@@ -5,7 +5,7 @@ open Memory
 open Value
 
 type address = nat
-type word = byte
+type word = nat
 
 type systemState
      = { memory: memoryState;
@@ -38,7 +38,13 @@ let system_equivalence_is_symmetric (lhs rhs:systemState):
       list_equivalence_is_symmetric _ lhs.memory          rhs.memory
 
 
-(* Redaction *)
+(*******************************************************************************
+ * Redaction
+ *
+ * We introduce the concept of "redaction", which is to zero all of the data in
+ * blinded values of the system.
+ *******************************************************************************)
+
 let redact_system (s:systemState): systemState = {
     pc = (redaction_preserves_length _ s.memory 0;
           let redacted_memory = redact_list s.memory 0 in
@@ -66,7 +72,7 @@ let equivalent_systems_have_equal_redactions (s1:systemState) (s2:systemState):
  * We build our system from an execution unit (essentially, an ISA)
  * and a function that "steps" the processor state (essentially, the
  * microarchitecture, which for now just fetch-executes in a single step).
- *)
+ *******************************************************************************)
 type execution_unit = word -> systemState -> systemState
 
 val step

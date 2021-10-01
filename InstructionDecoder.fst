@@ -5,6 +5,7 @@ open Memory
 open Value
 
 type operand =
+  | PC
   | Register: n:nat -> operand
   | Memory:   n:nat -> operand
 
@@ -12,6 +13,7 @@ let rec get_operands (operands:list operand) (state:systemState): r:(list (maybe
   match operands with
     | Nil -> Nil
     | hd :: tl -> (match hd with
+                  | PC -> Clear state.pc
                   | Register n -> if n < FStar.List.length state.registers then
                                     (Memory.nth state.registers n)
                                  else Clear 0
@@ -27,6 +29,7 @@ let rec get_operands_on_redacted_input_has_equivalent_output (operands:list oper
     match operands with
       | Nil -> ()
       | hd :: tl -> ((match hd with
+                    | PC -> ()
                     | Register n -> (
                         lists_are_equivalent_to_their_redaction _ state.registers 0;
                         assert((FStar.List.length state.registers) = (FStar.List.length redacted_state.registers));
@@ -97,6 +100,9 @@ let rec replacing_in_equivalent_lists_with_equivalent_value_yields_equivalent_li
 
 let set_one_operand (operand:operand) (value:maybeBlinded #word) (state:systemState): systemState =
     match operand with
+      | PC -> (match value with
+               | Clear v -> if v < FStar.List.length state.memory then { state with pc = v } else {state with pc = 0}
+               | Blinded b -> {state with pc = 0})
       | Register n -> if n < FStar.List.length state.registers then
                         { state with registers =
                           replace_list_value state.registers n value 
@@ -117,6 +123,15 @@ let setting_single_equivalent_operand_values_on_equivalent_systems_yields_equiva
     Lemma (requires (equiv_system state1 state2) /\ (equiv value1 value2))
           (ensures  (equiv_system (set_one_operand operand value1 state1) (set_one_operand operand value2 state2))) =
     match operand with
+      | PC -> (match value1, value2 with
+               | Clear v1, Clear v2 -> (
+                       assert(v1 = v2);
+                       equivalent_lists_have_equal_lengths state1.memory state2.memory;
+                       let post1 = (set_one_operand operand value1 state1) in
+                       let post2 = (set_one_operand operand value2 state2) in
+                       assert(post1.pc = post2.pc)
+                       )
+               | _, _ -> ())
       | Register n -> (
           equivalent_lists_have_equal_lengths state1.registers state2.registers;
           if n >= FStar.List.length state1.registers then ()
