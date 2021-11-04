@@ -7,7 +7,10 @@ open Value
 type operand =
   | PC
   | Register: n:nat -> operand
-  | Memory:   n:nat -> operand
+
+type storage_operation =
+  | Load: address:nat -> dest:nat -> storage_operation
+  | Store: address:nat -> src:nat -> storage_operation
 
 let rec get_operands (operands:list operand) (state:systemState): r:(list (maybeBlinded #word)){FStar.List.length r = FStar.List.length operands} =
   match operands with
@@ -17,55 +20,172 @@ let rec get_operands (operands:list operand) (state:systemState): r:(list (maybe
                   | Register n -> if n < FStar.List.length state.registers then
                                     (Memory.nth state.registers n)
                                  else Clear 0
-                  | Memory   n -> if n < FStar.List.length state.memory then
-                                    (Memory.nth state.memory n)
-                                 else Clear 0
                 ) :: get_operands tl state
 
-let rec get_operands_on_redacted_input_has_equivalent_output (operands:list operand) (state:systemState):
-  Lemma (ensures (equiv_list (get_operands operands state) (get_operands operands (redact_system state)) ))
-  = let redacted_state = (redact_system state) in
-    systems_are_equivalent_to_their_redaction state;
-    match operands with
+let rec get_operands_on_equivalent_inputs_has_equivalent_output (operands:list operand) (state1 state2:systemState):
+  Lemma (requires (equiv_system state1 state2))
+        (ensures  (equiv_list (get_operands operands state1)
+                              (get_operands operands state2)))
+  = match operands with
       | Nil -> ()
-      | hd :: tl -> ((match hd with
-                    | PC -> ()
+      | hd :: tl -> (let result_hd1, result_hd2 = match hd with
+                    | PC -> (
+                         let head1 = FStar.List.Tot.hd (get_operands operands state1) in
+                         let head2 = FStar.List.Tot.hd (get_operands operands state2) in
+                         equal_values_are_equivalent nat head1 head2;
+                         head1, head2
+                         )
                     | Register n -> (
-                        lists_are_equivalent_to_their_redaction _ state.registers 0;
-                        assert((FStar.List.length state.registers) = (FStar.List.length redacted_state.registers));
-                        if n < FStar.List.length state.registers then (
-                          equivalent_memories_have_equivalent_values state.registers redacted_state.registers n )
-                        else ()
-                        )
-                    | Memory n -> (
-                        lists_are_equivalent_to_their_redaction _ state.memory 0;
-                        assert(FStar.List.length state.memory = FStar.List.length redacted_state.memory);
-                        if n < FStar.List.length state.memory then (
-                        equivalent_memories_have_equivalent_values state.memory redacted_state.memory n )
-                        else ()
-                        ));
-                    get_operands_on_redacted_input_has_equivalent_output tl state
+                        assert(equiv_list state1.registers state2.registers);
+                        equivalent_lists_have_equal_lengths state1.registers state2.registers;
+                        assert((FStar.List.length state1.registers) = (FStar.List.length state2.registers));
+                        if n < FStar.List.length state1.registers then (
+                          equivalent_memories_have_equivalent_values state1.registers state2.registers n )
+                        else ();
+
+                        FStar.List.Tot.hd (get_operands operands state1), FStar.List.Tot.hd (get_operands operands state2)
+                        ) in
+
+                    assert(equiv result_hd1 result_hd2);
+                    get_operands_on_equivalent_inputs_has_equivalent_output tl state1 state2
                   )
 
 type decodedInstruction = { opcode: int; input_operands: list operand; output_operands: list operand }
 
 type decoder = (inst:word) -> decodedInstruction
 
+type instruction_result (di:decodedInstruction) = {
+  register_writes: (vals:(list (maybeBlinded #word)){FStar.List.length vals = FStar.List.length di.output_operands});
+  memory_ops   :(list storage_operation)
+  }
+
+let equiv_storage_operation (lhs rhs: storage_operation) =
+  match lhs, rhs with
+    | (Load la ld), (Load ra rd) -> (la = ra /\ ld = rd)
+    | (Store la ls), (Store ra rs) -> (la = ra /\ ls = rs)
+    | _, _ -> False
+
+let rec equiv_storage_operations (lhs rhs: list storage_operation) =
+  match lhs, rhs with
+    | lh :: lt, rh :: rt -> (equiv_storage_operation lh rh) /\ equiv_storage_operations lt rt
+    | [], [] -> True
+    | _, _ -> False
+
+let equal_storage_operations_are_equivalent (lhs rhs: storage_operation):
+  Lemma (requires lhs = rhs)
+        (ensures  (equiv_storage_operation lhs rhs)) =
+  ()
+
+let rec equal_storage_operation_lists_are_equivalent (lhs rhs: list storage_operation):
+  Lemma (requires lhs = rhs)
+        (ensures equiv_storage_operations lhs rhs) =
+  match lhs, rhs with
+    | hl :: tl, hr :: tr -> (
+         equal_storage_operations_are_equivalent hl hr;
+         equal_storage_operation_lists_are_equivalent tl tr
+      )
+    | _ -> ()
+
+let storage_operation_equivalence_is_symmetric (lhs rhs: storage_operation):
+  Lemma (requires (equiv_storage_operation lhs rhs))
+        (ensures  (equiv_storage_operation rhs lhs)) =
+  ()
+
+let rec storage_operation_list_equivalence_is_symmetric (lhs rhs: list storage_operation):
+  Lemma (requires (equiv_storage_operations lhs rhs))
+        (ensures  (equiv_storage_operations rhs lhs)) =
+  match lhs, rhs with
+   | hl :: tl, hr :: tr -> (
+        storage_operation_equivalence_is_symmetric hl hr;
+        storage_operation_list_equivalence_is_symmetric tl tr
+     )
+   | _ -> ()
+
+let storage_operation_equivalence_is_transitive (lhs mid rhs: storage_operation):
+  Lemma (requires (equiv_storage_operation lhs mid) /\ (equiv_storage_operation mid rhs))
+        (ensures  (equiv_storage_operation lhs rhs)) =
+  ()
+
+let rec storage_operation_list_equivalence_is_transitive (lhs mid rhs: list storage_operation):
+  Lemma (requires (equiv_storage_operations lhs mid) /\ (equiv_storage_operations mid rhs))
+        (ensures  (equiv_storage_operations lhs rhs)) =
+  match lhs, mid, rhs with
+   | hl :: tl, hm :: tm, hr :: tr -> (
+        storage_operation_equivalence_is_transitive hl hm hr;
+        storage_operation_list_equivalence_is_transitive tl tm tr
+     )
+   | _ -> ()
+
+let rec equivalent_storage_operation_lists_have_equal_length (lhs rhs: list storage_operation):
+  Lemma (requires equiv_storage_operations lhs rhs)
+        (ensures (FStar.List.length lhs) = (FStar.List.length rhs)) =
+  match lhs, rhs with
+    | hl :: tl, hr :: tr -> equivalent_storage_operation_lists_have_equal_length tl tr
+    | _, _ -> ()
+
+
+let equiv_result (#di:decodedInstruction) (lhs rhs:(instruction_result di)) =
+    (equiv_list lhs.register_writes rhs.register_writes)
+  /\ (equiv_storage_operations lhs.memory_ops rhs.memory_ops)
+
+let equal_results_are_equivalent (#di:decodedInstruction) (lhs rhs:(instruction_result di)):
+  Lemma (requires lhs = rhs)
+        (ensures  equiv_result lhs rhs)
+  = equal_lists_are_equivalent word lhs.register_writes rhs.register_writes;
+    equal_storage_operation_lists_are_equivalent lhs.memory_ops rhs.memory_ops
+
+let result_equivalence_is_symmetric (#di:decodedInstruction) (lhs rhs:(instruction_result di)):
+  Lemma (requires equiv_result lhs rhs)
+        (ensures equiv_result rhs lhs) =
+  list_equivalence_is_symmetric word lhs.register_writes rhs.register_writes;
+  storage_operation_list_equivalence_is_symmetric lhs.memory_ops rhs.memory_ops
+
+let result_equivalence_is_transitive (#di:decodedInstruction) (lhs mid rhs:(instruction_result di)):
+  Lemma (requires (equiv_result lhs mid) /\ (equiv_result mid rhs))
+        (ensures  (equiv_result lhs rhs)) =
+  list_equivalence_is_transitive word lhs.register_writes mid.register_writes rhs.register_writes;
+  storage_operation_list_equivalence_is_transitive lhs.memory_ops mid.memory_ops rhs.memory_ops
+
 type instruction_semantics =
   (di: decodedInstruction) ->
   (pre:(list (maybeBlinded #word)){FStar.List.length pre = FStar.List.length di.input_operands}) ->
-  (post:(list (maybeBlinded #word)){FStar.List.length post = FStar.List.length di.output_operands})
+  instruction_result di
 
 let is_redacting_equivalent_instruction_semantics_somewhere
       (s:instruction_semantics)
-      (di:decodedInstruction)
-      (input:(list (maybeBlinded #word)){FStar.List.length input = FStar.List.length di.input_operands}) =
+      (d:decoder)
+      (inst:word)
+      (input:(list (maybeBlinded #word)){FStar.List.length input = FStar.List.length (d inst).input_operands}) =
     redaction_preserves_length word input 0;
-    (equiv_list (s di input) (s di (redact_list input 0)))
+    (equiv_result (s (d inst) input) (s (d inst) (redact_list input 0)))
 
-let is_redacting_equivalent_instruction_semantics_everywhere (s:instruction_semantics) (di:decodedInstruction) =
-    forall(pre:(list (maybeBlinded #word)){FStar.List.length pre = FStar.List.length di.input_operands}).
-                is_redacting_equivalent_instruction_semantics_somewhere s di pre
+let is_redacting_equivalent_instruction_semantics_everywhere (s:instruction_semantics) (d:decoder) =
+    forall (inst:word) (pre:(list (maybeBlinded #word)){FStar.List.length pre = FStar.List.length (d inst).input_operands}).
+                is_redacting_equivalent_instruction_semantics_somewhere s d inst pre
+
+let redacting_equivalent_instruction_semantics_on_equivalent_inputs_yields_equivalent_results_somewhere
+    (s:instruction_semantics)
+      (d:decoder)
+      (inst:word)
+      (input1 input2:(l:(list (maybeBlinded #word)){FStar.List.length l  = FStar.List.length (d inst).input_operands})):
+  Lemma (requires (is_redacting_equivalent_instruction_semantics_everywhere s d) /\ (equiv_list input1 input2))
+        (ensures  equiv_result (s (d inst) input1) (s (d inst) input2)) =
+  let result1 = (s (d inst) input1) in
+  let result2 = (s (d inst) input2) in
+  let redacted_result1 = (s (d inst) (redact_list input1 0)) in
+  let redacted_result2 = (s (d inst) (redact_list input2 0)) in
+
+  equivalent_lists_have_equal_redactions word input1 input2 0;
+  assert(redacted_result1 = redacted_result2);
+  equal_results_are_equivalent redacted_result1 redacted_result2;
+
+  result_equivalence_is_symmetric result2 redacted_result1;
+
+  assert(equiv_result result1 redacted_result1);
+  assert(equiv_result redacted_result1 result2);
+
+  result_equivalence_is_transitive result1 redacted_result1 result2;
+  assert(equiv_result result1 result2)
 
 
 let rec mux_list_single (a:list(maybeBlinded #word)) (b:list(maybeBlinded #word)) (n:nat):
@@ -109,12 +229,7 @@ let set_one_operand (operand:operand) (value:maybeBlinded #word) (state:systemSt
                         }
                      else
                        state
-      | Memory n -> if n < FStar.List.length state.memory then
-                      let modified_memory = replace_list_value state.memory n value in
-                      assert(FStar.List.length modified_memory = FStar.List.length state.memory);
-                      { state with memory = replace_list_value state.memory n value }
-                   else
-                     state
+
 
 let setting_single_equivalent_operand_values_on_equivalent_systems_yields_equivalent_systems
     (operand       :operand)
@@ -137,12 +252,6 @@ let setting_single_equivalent_operand_values_on_equivalent_systems_yields_equiva
           if n >= FStar.List.length state1.registers then ()
           else
             replacing_in_equivalent_lists_with_equivalent_value_yields_equivalent_lists state1.registers state2.registers n value1 value2
-        )
-      | Memory n -> (
-          equivalent_lists_have_equal_lengths state1.memory state2.memory;
-          if n >= FStar.List.length state1.memory then ()
-          else
-            replacing_in_equivalent_lists_with_equivalent_value_yields_equivalent_lists state1.memory state2.memory n value1 value2
         )
 
 
@@ -175,6 +284,111 @@ let rec setting_equivalent_operand_values_on_equivalent_systems_yields_equivalen
         )
       | _ -> ()
 
+let complete_one_memory_transaction (op:storage_operation) (pre:systemState) =
+  match op with
+    | Load address register -> if register < FStar.List.length pre.registers
+                                  && address < FStar.List.length pre.memory then
+                                  { pre with registers = replace_list_value pre.registers register (FStar.List.Tot.index pre.memory address) }
+                               else pre
+    | Store address register -> if register < FStar.List.length pre.registers
+                                  && address < FStar.List.length pre.memory then
+                                  { pre with memory = replace_list_value pre.memory address (FStar.List.Tot.index pre.registers register) }
+                                else pre
+
+let rec complete_memory_transactions (op:list storage_operation) (pre:systemState) =
+  match op with
+    | hd :: tl -> complete_memory_transactions tl (complete_one_memory_transaction hd pre)
+    | [] -> pre
+
+let completing_single_memory_transactions_on_equivalent_systems_yields_equivalent_systems
+    (op1:storage_operation) (op2:storage_operation)
+    (state1 state2 :systemState):
+    Lemma (requires (equiv_system state1 state2) /\ (equiv_storage_operation op1 op2))
+          (ensures  (equiv_system (complete_one_memory_transaction op1 state1) (complete_one_memory_transaction op2 state2))) =
+                 let post1 = (complete_one_memory_transaction op1 state1) in
+                 let post2 = (complete_one_memory_transaction op2 state2) in
+
+                 equivalent_lists_have_equal_lengths state1.memory state2.memory;
+                 equivalent_lists_have_equal_lengths state1.registers state2.registers;
+
+
+                 match op1, op2 with
+                  | Load a1 r1, Load a2 r2 -> (
+                         assert(a1 = a2);
+                         assert(r1 = r2);
+
+                         assert(equiv_list state1.registers state2.registers);
+                         assert(equiv_list state1.memory    state2.memory);
+
+
+                         if (a1 < FStar.List.length state1.memory) && (r1 < FStar.List.length state1.registers) then (
+
+                           assert(a2 < FStar.List.length state2.memory);
+                           assert(r2 < FStar.List.length state2.registers);
+
+                           equivalent_lists_have_equivalent_values word state1.memory state2.memory a1;
+                           let write1 = (FStar.List.Tot.index state1.memory a1) in
+                           let write2 = (FStar.List.Tot.index state2.memory a2) in
+                           assert(equiv write1 write2);
+
+                           assert(post1.registers = (replace_list_value state1.registers r1 write1));
+                           assert(post2.registers = (replace_list_value state2.registers r2 write2));
+                           replacing_in_equivalent_lists_with_equivalent_value_yields_equivalent_lists state1.registers state2.registers r1 write1 write2;
+                           assert(equiv_list post1.registers post2.registers);
+                           assert(equiv_list state1.memory state2.memory);
+                           assert(post1.pc = post2.pc)
+                           )
+                         else (
+                           assert(post1 = state1);
+                           assert(post2 = state2)
+                           );
+                         assert(equiv_system post1 post2)
+                    )
+                  | Store a1 r1, Store a2 r2 -> (
+                         assert(a1 = a2);
+                         assert(r1 = r2);
+
+                         assert(equiv_list state1.registers state2.registers);
+                         assert(equiv_list state1.memory    state2.memory);
+
+                         if (a1 < FStar.List.length state1.memory) && (r1 < FStar.List.length state1.registers) then (
+
+                           assert(a2 < FStar.List.length state2.memory);
+                           assert(r2 < FStar.List.length state2.registers);
+
+                           equivalent_lists_have_equivalent_values word state1.registers state2.registers r1;
+                           let write1 = (FStar.List.Tot.index state1.registers r1) in
+                           let write2 = (FStar.List.Tot.index state2.registers r2) in
+                           assert(equiv write1 write2);
+
+                           assert(post1.memory = (replace_list_value state1.memory a1 write1));
+                           assert(post2.memory = (replace_list_value state2.memory a2 write2));
+                           replacing_in_equivalent_lists_with_equivalent_value_yields_equivalent_lists state1.memory state2.memory a1 write1 write2;
+                           assert(equiv_list post1.registers post2.registers);
+                           assert(equiv_list state1.memory state2.memory);
+                           assert(post1.pc = post2.pc)
+                           )
+                         else (
+                           assert(post1 = state1);
+                           assert(post2 = state2)
+                           );
+                          assert(equiv_system post1 post2)
+                    );
+                 assert(equiv_system post1 post2)
+
+let rec completing_equivalent_memory_transactions_on_equivalent_systems_yields_equivalent_systems
+    (ops1:list storage_operation) (ops2:(list storage_operation){FStar.List.length ops1 = FStar.List.length ops2})
+    (state1 state2 :systemState):
+    Lemma (requires (equiv_system state1 state2) /\ (equiv_storage_operations ops1 ops2))
+          (ensures  (equiv_system (complete_memory_transactions ops1 state1) (complete_memory_transactions ops2 state2))) =
+    match ops1, ops2 with
+     | op1 :: t1, op2 :: t2 -> (
+           let post1 = complete_one_memory_transaction op1 state1 in
+           let post2 = complete_one_memory_transaction op2 state2 in
+           completing_single_memory_transactions_on_equivalent_systems_yields_equivalent_systems op1 op2 state1 state2;
+           completing_equivalent_memory_transactions_on_equivalent_systems_yields_equivalent_systems t1 t2 post1 post2
+       )
+     | [], [] -> ()
 
 let rec any_value_is_blinded (values: list (maybeBlinded #word)): bool =
   match values with
@@ -196,8 +410,8 @@ let rec blind_all_values (values: list (maybeBlinded #word)): r:(list (maybeBlin
       | Clear(hd)   :: tl -> Blinded(hd) :: blind_all_values tl
 
 let rec blinding_all_values_blinds_each_value (values: list (maybeBlinded #word)) (n:nat{n < FStar.List.length values}):
-  Lemma (ensures Blinded? (nth (blind_all_values values) n))
-        [SMTPat (Blinded? (nth (blind_all_values values) n))] =
+  Lemma (ensures Blinded? (FStar.List.Tot.index (blind_all_values values) n))
+        [SMTPat (Blinded? (FStar.List.Tot.index (blind_all_values values) n))] =
   match n, values with
     | 0, _   -> ()
     | _, Nil -> ()
@@ -232,103 +446,76 @@ let rec mux_list (a:list (maybeBlinded #word)) (b:(list (maybeBlinded #word))) (
 let decoding_execution_unit (d:decoder) (s:instruction_semantics) (inst:word) (pre:systemState): systemState =
     let decoded = d inst in
     let input_operand_values = (get_operands decoded.input_operands pre) in
-    let output_operand_values = (s decoded input_operand_values) in
-    let output_operand_values = if any_value_is_blinded input_operand_values then
-                                   blind_all_values output_operand_values
-                                else
-                                  output_operand_values
-                                in
-    set_operands decoded.output_operands output_operand_values pre
-
+    let instruction_output = (s decoded input_operand_values) in
+    let output_operand_values = instruction_output.register_writes in
+    let intermediate_with_updated_registers = set_operands decoded.output_operands output_operand_values pre in
+    complete_memory_transactions instruction_output.memory_ops intermediate_with_updated_registers
 
 irreducible let trigger (d:decoder) (s:instruction_semantics) (inst:word) (pre:systemState) = False
 
-let decoding_execution_unit_is_redacting_equivalent_somewhere (d:decoder) (s:instruction_semantics) (inst:word) (pre:systemState):
+let decoding_execution_unit_with_redacting_equivalent_instruction_semantics_is_redacting_equivalent_somewhere (d:decoder) (s:instruction_semantics{is_redacting_equivalent_instruction_semantics_everywhere s d}) (inst:word) (pre:systemState):
     Lemma (ensures (equiv_system (decoding_execution_unit d s inst pre)
                                  (decoding_execution_unit d s inst (redact_system pre))))
-          [SMTPat (trigger d s inst pre)] =
+    [SMTPat (trigger d s inst pre)] =
+      let decoded = d inst in
+      let input_operand_values = (get_operands decoded.input_operands pre) in
+      let redacted_input_operand_values = (get_operands decoded.input_operands (redact_system pre)) in
+      (* let redacted_input_operand_values = (redact_list (get_operands decoded.input_operands pre) 0) in *)
+      let instruction_output = (s decoded input_operand_values) in
+      let redacted_instruction_output = (s decoded redacted_input_operand_values) in
 
-    (* Start by naming the intermediate values in the evaluations. *)
-    let decoded = d inst in
-    let pre_redacted = redact_system pre in
-
-    let input_operand_values = (get_operands decoded.input_operands pre) in
-    let output_operand_values = (s decoded input_operand_values) in
-    let raw_post_state = (set_operands decoded.output_operands output_operand_values pre) in
-    let post_state = decoding_execution_unit d s inst pre in
-
-    let redacted_input_operand_values = (get_operands decoded.input_operands (redact_system pre)) in
-    let redacted_output_operand_values = (s decoded redacted_input_operand_values) in
-    let raw_post_state_redacted = (set_operands decoded.output_operands redacted_output_operand_values pre_redacted) in
-    let post_state_redacted = decoding_execution_unit d s inst pre_redacted in
-
-    (* First, show that the inputs operand values are equivalent, and so that
-       they have the same "any-blindedness", which is to say that redaction
-       does not affect the taintness of the inputs (or so the outputs).
-     *)
-    get_operands_on_redacted_input_has_equivalent_output decoded.input_operands pre;
-    assert(equiv_list input_operand_values redacted_input_operand_values);
-    equivalent_memories_have_identical_any_blindedness input_operand_values redacted_input_operand_values;
-    assert((any_value_is_blinded input_operand_values) = (any_value_is_blinded redacted_input_operand_values));
-
-    (* We continue by looking at each branch of the evaluation. *)
-
-    (* First, if none of the inputs are blinded. *)
-    if not (any_value_is_blinded (input_operand_values)) then (
-
-      (* Since the input values are unblinded and equivalent, they must
-         be equal, and therefore so must be the output values.
-       *)
-      equivalent_unblinded_lists_are_equal input_operand_values redacted_input_operand_values;
-      assert(input_operand_values = redacted_input_operand_values);
-      assert(output_operand_values = redacted_output_operand_values);
-
-
-      (* Just because the outputs of the computation are the same, doesn't mean
-         that the output state is, since there may be other blinded values
-         in the memory or registers.
-       *)
-
-      (* First show that the pre-instruction states are equivalent. *)
       systems_are_equivalent_to_their_redaction pre;
+      get_operands_on_equivalent_inputs_has_equivalent_output decoded.input_operands pre (redact_system pre);
+      assert(equiv_list input_operand_values redacted_input_operand_values);
 
-      (* Then show that writing the results to these equivalent states leads
-         to an equivalent output state.
-       *)
-      equal_lists_are_equivalent _ output_operand_values redacted_output_operand_values;
+      redacting_equivalent_instruction_semantics_on_equivalent_inputs_yields_equivalent_results_somewhere s d inst input_operand_values redacted_input_operand_values;
+      assert(equiv_result instruction_output redacted_instruction_output);
+
+      lists_are_equivalent_to_their_redaction word input_operand_values 0;
+
+      assert(equiv_list input_operand_values (get_operands decoded.input_operands (redact_system pre)));
+
+      list_equivalence_is_transitive word redacted_input_operand_values input_operand_values (get_operands decoded.input_operands (redact_system pre));
+      assert(equiv_list redacted_input_operand_values (get_operands decoded.input_operands (redact_system pre)));
+
+      assert(equiv_list instruction_output.register_writes redacted_instruction_output.register_writes);
+
+      let post1 = set_operands decoded.output_operands instruction_output.register_writes pre in
+      let post_redacted1 = set_operands decoded.output_operands redacted_instruction_output.register_writes (redact_system pre) in
+
+      systems_are_equivalent_to_their_redaction pre;
+      assert(equiv_system pre (redact_system pre));
+
       setting_equivalent_operand_values_on_equivalent_systems_yields_equivalent_systems
-        decoded.output_operands output_operand_values redacted_output_operand_values pre pre_redacted;
+        decoded.output_operands instruction_output.register_writes
+        redacted_instruction_output.register_writes
+        pre
+        (redact_system pre);
 
-      assert(equiv_system post_state post_state_redacted)
+      assert(equiv_system post1 post_redacted1);
 
-    (* Next, we consider the case where there is at least one blinded input. *)
-    ) else (
+      let post2 = complete_memory_transactions instruction_output.memory_ops post1 in
+      let post_redacted2 = complete_memory_transactions redacted_instruction_output.memory_ops post_redacted1 in
 
-      (* Since an input value is blinded, so will be the outputs. *)
-      let blinded_output_values = blind_all_values output_operand_values in
-      let blinded_output_values_redacted = blind_all_values redacted_output_operand_values in
+      assert(equiv_storage_operations instruction_output.memory_ops redacted_instruction_output.memory_ops);
+      equivalent_storage_operation_lists_have_equal_length instruction_output.memory_ops redacted_instruction_output.memory_ops;
 
-      (* But since the outputs are all blinded, they must all be equivalent. *)
-      assert(FStar.List.length blinded_output_values = FStar.List.length blinded_output_values_redacted);
-      assert(all_values_are_blinded _ blinded_output_values);
-      assert(all_values_are_blinded _ blinded_output_values_redacted);
-      lists_of_blinded_values_of_equal_length_are_equivalent _ blinded_output_values blinded_output_values_redacted;
+      completing_equivalent_memory_transactions_on_equivalent_systems_yields_equivalent_systems
+        instruction_output.memory_ops
+        redacted_instruction_output.memory_ops
+        post1
+        post_redacted1;
 
-      (* As before, we must finally show that writing these equivalent values
-         to equivalent states result in equivalent final states. *)
-      systems_are_equivalent_to_their_redaction pre;
+      assert(equiv_system post2 post_redacted2)
 
-      setting_equivalent_operand_values_on_equivalent_systems_yields_equivalent_systems decoded.output_operands blinded_output_values blinded_output_values_redacted pre pre_redacted
-    )
-
-let decoding_execution_unit_is_redacting_equivalent (d:decoder) (s:instruction_semantics):
+let decoding_execution_unit_with_taint_propagating_instruction_semantics_is_redacting_equivalent (d:decoder) (s:instruction_semantics{is_redacting_equivalent_instruction_semantics_everywhere s d}):
   Lemma (ensures forall(pre:systemState) (inst:word).
                  (equiv_system (decoding_execution_unit d s inst pre)
                                (decoding_execution_unit d s inst (redact_system pre)))
                  \/ (trigger d s inst pre) )
     = ()
 
-let each_decoding_execution_unit_is_safe (d:decoder) (s:instruction_semantics):
+let each_decoding_execution_unit_with_taint_propagating_instruction_semantics_is_safe (d:decoder) (s:instruction_semantics{is_redacting_equivalent_instruction_semantics_everywhere s d}):
   Lemma (ensures is_safe (decoding_execution_unit d s))
-  = decoding_execution_unit_is_redacting_equivalent d s;
+  = decoding_execution_unit_with_taint_propagating_instruction_semantics_is_redacting_equivalent d s;
     redacting_equivalent_execution_units_are_safe (decoding_execution_unit d s)

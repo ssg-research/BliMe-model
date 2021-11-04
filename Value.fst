@@ -105,6 +105,7 @@ let rec equivalent_lists_have_equal_redactions (t:eqtype) (x y: list(maybeBlinde
 let rec list_equivalence_is_symmetric (t:eqtype) (lhs rhs: list(maybeBlinded #t)):
     Lemma (requires equiv_list lhs rhs)
           (ensures   equiv_list rhs lhs)
+          [SMTPat (equiv_list lhs rhs)]
     = match lhs, rhs  with
       | hl :: tl, hr :: tr -> list_equivalence_is_symmetric t tl tr
       | _ -> ()
@@ -124,7 +125,7 @@ let rec nth (#t:eqtype) (m:list (maybeBlinded #t)) (n:nat{n < FStar.List.length 
 
 let rec equivalent_lists_have_equivalent_values (t:eqtype) (a b: list (maybeBlinded #t)) (n: nat{n < FStar.List.length a && n < FStar.List.length b}):
     Lemma (requires equiv_list a b)
-          (ensures equiv (nth a n) (nth b n))
+          (ensures equiv (FStar.List.Tot.index a n) (FStar.List.Tot.index b n))
     = match n, a, b  with
       | 0, _, _ -> ()
       | _, hl :: tl, hr :: tr -> equivalent_lists_have_equivalent_values _ tl tr (n - 1)
