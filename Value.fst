@@ -4,6 +4,10 @@ type maybeBlinded (#t:Type) =
    | Clear   : v:t -> maybeBlinded #t
    | Blinded : v:t -> maybeBlinded #t
 
+let unwrap (#t:Type) (mb:maybeBlinded #t) =
+  match mb with
+   | Clear v -> v
+   | Blinded v -> v
 
 val equiv (#t:eqtype)
     (lhs:maybeBlinded #t)
@@ -47,6 +51,11 @@ let equivalence_is_transitive (t:eqtype) (lhs mid rhs:maybeBlinded #t):
 let equivalence_is_symmetric (t:eqtype) (lhs rhs: maybeBlinded #t):
     Lemma (requires equiv lhs rhs)
           (ensures  equiv rhs lhs)
+    = ()
+
+let equivalent_clear_values_are_equal (t:eqtype) (x y:maybeBlinded #t):
+    Lemma (requires Clear? x /\ Clear? y /\ equiv x y)
+          (ensures x = y)
     = ()
 
 val equiv_list (#t:eqtype)
@@ -122,6 +131,13 @@ let rec nth (#t:eqtype) (m:list (maybeBlinded #t)) (n:nat{n < FStar.List.length 
     | hd :: tl, 0 -> hd
     | hd :: tl, n -> nth tl (n-1)
 
+let rec redacted_lists_have_redacted_values (t:eqtype) (a: list (maybeBlinded #t)) (d:t) (n: nat{n < FStar.List.length a}):
+  Lemma (ensures FStar.List.Tot.index (redact_list a d) n = redact (FStar.List.Tot.index a n) d)
+        [SMTPat (FStar.List.Tot.index (redact_list a d) n)]
+    = match n, a with
+      | 0, _ -> ()
+      | _, hl :: tl -> redacted_lists_have_redacted_values _ tl d (n - 1)
+      | _ -> ()
 
 let rec equivalent_lists_have_equivalent_values (t:eqtype) (a b: list (maybeBlinded #t)) (n: nat{n < FStar.List.length a && n < FStar.List.length b}):
     Lemma (requires equiv_list a b)

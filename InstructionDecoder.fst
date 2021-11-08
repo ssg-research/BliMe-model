@@ -18,9 +18,44 @@ let rec get_operands (operands:list operand) (state:systemState): r:(list (maybe
     | hd :: tl -> (match hd with
                   | PC -> Clear state.pc
                   | Register n -> if n < FStar.List.length state.registers then
-                                    (Memory.nth state.registers n)
+                                    (FStar.List.Tot.index state.registers n)
                                  else Clear 0
                 ) :: get_operands tl state
+
+let get_operands_with_one_operand_on_redacted_input_has_redacted_output (op: operand) (state:systemState):
+  Lemma (ensures get_operands [op] (redact_system state) = redact_list (get_operands [op] state) 0) =
+  let head = FStar.List.Tot.hd (get_operands [op] state) in
+  let head_of_redacted = FStar.List.Tot.hd (get_operands [op] (redact_system state)) in
+  match op with
+    | PC -> ()
+    | Register n -> (
+                   lists_are_equivalent_to_their_redaction _ state.registers 0;
+                   equal_lists_are_equivalent _ (redact_system state).registers  (redact_list state.registers 0);
+                   equivalent_lists_have_equal_lengths state.registers (redact_system state).registers;
+                   if n >= FStar.List.length state.registers then ()
+                   else ()
+      )
+
+let rec get_operands_on_redacted_input_has_redacted_output (operands:list operand) (state:systemState):
+  Lemma (ensures get_operands operands (redact_system state) = redact_list (get_operands operands state) 0)
+        [SMTPat (get_operands operands (redact_system state))] =
+  (
+    match operands with
+      | Nil -> ()
+      | hd :: tl -> ( let head = FStar.List.Tot.hd (get_operands operands state) in
+                    let head_of_redacted = FStar.List.Tot.hd (get_operands operands (redact_system state)) in
+
+                    get_operands_with_one_operand_on_redacted_input_has_redacted_output hd state;
+                    assert(redact head 0 = head_of_redacted);
+
+                    let redacted_head = redact head 0 in
+
+                    get_operands_on_redacted_input_has_redacted_output tl state;
+                    assert(get_operands tl (redact_system state) = redact_list (get_operands tl state) 0);
+                    assert((head_of_redacted :: (get_operands tl (redact_system state)))
+                         = (redacted_head :: (redact_list (get_operands tl state) 0)))
+                  )
+)
 
 let rec get_operands_on_equivalent_inputs_has_equivalent_output (operands:list operand) (state1 state2:systemState):
   Lemma (requires (equiv_system state1 state2))
@@ -40,7 +75,7 @@ let rec get_operands_on_equivalent_inputs_has_equivalent_output (operands:list o
                         equivalent_lists_have_equal_lengths state1.registers state2.registers;
                         assert((FStar.List.length state1.registers) = (FStar.List.length state2.registers));
                         if n < FStar.List.length state1.registers then (
-                          equivalent_memories_have_equivalent_values state1.registers state2.registers n )
+                          equivalent_lists_have_equivalent_values _ state1.registers state2.registers n )
                         else ();
 
                         FStar.List.Tot.hd (get_operands operands state1), FStar.List.Tot.hd (get_operands operands state2)
@@ -50,7 +85,7 @@ let rec get_operands_on_equivalent_inputs_has_equivalent_output (operands:list o
                     get_operands_on_equivalent_inputs_has_equivalent_output tl state1 state2
                   )
 
-type decodedInstruction = { opcode: int; input_operands: list operand; output_operands: list operand }
+type decodedInstruction = { opcode: nat; input_operands: list operand; output_operands: list operand }
 
 type decoder = (inst:word) -> decodedInstruction
 
@@ -146,29 +181,38 @@ let result_equivalence_is_transitive (#di:decodedInstruction) (lhs mid rhs:(inst
   list_equivalence_is_transitive word lhs.register_writes mid.register_writes rhs.register_writes;
   storage_operation_list_equivalence_is_transitive lhs.memory_ops mid.memory_ops rhs.memory_ops
 
-type instruction_semantics =
-  (di: decodedInstruction) ->
-  (pre:(list (maybeBlinded #word)){FStar.List.length pre = FStar.List.length di.input_operands}) ->
-  instruction_result di
+type instruction_input (di:decodedInstruction) =
+     pre:(list (maybeBlinded #word)){(exists(s: systemState). pre = get_operands di.input_operands s)
+                                    /\ FStar.List.length pre = FStar.List.length di.input_operands}
+
+let redacted_instruction_inputs_are_instruction_inputs (di:decodedInstruction) (pre:instruction_input di): instruction_input di
+  = assert(exists (s:systemState). (pre = get_operands di.input_operands s /\
+             (get_operands di.input_operands (redact_system s) = redact_list (get_operands di.input_operands s) 0  )  ) );
+    redact_list pre 0
+
+type decoder_output (d:decoder) = (di:decodedInstruction{exists(inst:word). di = d inst})
+
+type instruction_semantics (d:decoder) = (di: decoder_output d) -> (pre:instruction_input di) -> instruction_result di
 
 let is_redacting_equivalent_instruction_semantics_somewhere
-      (s:instruction_semantics)
       (d:decoder)
+      (s:instruction_semantics d)
       (inst:word)
-      (input:(list (maybeBlinded #word)){FStar.List.length input = FStar.List.length (d inst).input_operands}) =
+      (input:instruction_input (d inst)) =
     redaction_preserves_length word input 0;
-    (equiv_result (s (d inst) input) (s (d inst) (redact_list input 0)))
+    let redacted_input = redacted_instruction_inputs_are_instruction_inputs (d inst) input in
+    (equiv_result (s (d inst) input) (s (d inst) redacted_input))
 
-let is_redacting_equivalent_instruction_semantics_everywhere (s:instruction_semantics) (d:decoder) =
-    forall (inst:word) (pre:(list (maybeBlinded #word)){FStar.List.length pre = FStar.List.length (d inst).input_operands}).
-                is_redacting_equivalent_instruction_semantics_somewhere s d inst pre
+let is_redacting_equivalent_instruction_semantics_everywhere (d:decoder) (s:instruction_semantics d) =
+    forall (inst:word) (pre:instruction_input (d inst)).
+                is_redacting_equivalent_instruction_semantics_somewhere d s inst pre
 
 let redacting_equivalent_instruction_semantics_on_equivalent_inputs_yields_equivalent_results_somewhere
-    (s:instruction_semantics)
       (d:decoder)
+      (s:instruction_semantics d)
       (inst:word)
-      (input1 input2:(l:(list (maybeBlinded #word)){FStar.List.length l  = FStar.List.length (d inst).input_operands})):
-  Lemma (requires (is_redacting_equivalent_instruction_semantics_everywhere s d) /\ (equiv_list input1 input2))
+      (input1 input2:instruction_input (d inst)):
+  Lemma (requires (is_redacting_equivalent_instruction_semantics_everywhere d s) /\ (equiv_list input1 input2))
         (ensures  equiv_result (s (d inst) input1) (s (d inst) input2)) =
   let result1 = (s (d inst) input1) in
   let result2 = (s (d inst) input2) in
@@ -443,7 +487,7 @@ let rec mux_list (a:list (maybeBlinded #word)) (b:(list (maybeBlinded #word))) (
     | Nil -> a
     | index_to_change :: tl -> mux_list (mux_list_single a b index_to_change) b tl
 
-let decoding_execution_unit (d:decoder) (s:instruction_semantics) (inst:word) (pre:systemState): systemState =
+let decoding_execution_unit (d:decoder) (s:instruction_semantics d) (inst:word) (pre:systemState): systemState =
     let decoded = d inst in
     let input_operand_values = (get_operands decoded.input_operands pre) in
     let instruction_output = (s decoded input_operand_values) in
@@ -451,9 +495,9 @@ let decoding_execution_unit (d:decoder) (s:instruction_semantics) (inst:word) (p
     let intermediate_with_updated_registers = set_operands decoded.output_operands output_operand_values pre in
     complete_memory_transactions instruction_output.memory_ops intermediate_with_updated_registers
 
-irreducible let trigger (d:decoder) (s:instruction_semantics) (inst:word) (pre:systemState) = False
+irreducible let trigger (d:decoder) (s:instruction_semantics d) (inst:word) (pre:systemState) = False
 
-let decoding_execution_unit_with_redacting_equivalent_instruction_semantics_is_redacting_equivalent_somewhere (d:decoder) (s:instruction_semantics{is_redacting_equivalent_instruction_semantics_everywhere s d}) (inst:word) (pre:systemState):
+let decoding_execution_unit_with_redacting_equivalent_instruction_semantics_is_redacting_equivalent_somewhere (d:decoder) (s:(instruction_semantics d){is_redacting_equivalent_instruction_semantics_everywhere d s}) (inst:word) (pre:systemState):
     Lemma (ensures (equiv_system (decoding_execution_unit d s inst pre)
                                  (decoding_execution_unit d s inst (redact_system pre))))
     [SMTPat (trigger d s inst pre)] =
@@ -468,7 +512,7 @@ let decoding_execution_unit_with_redacting_equivalent_instruction_semantics_is_r
       get_operands_on_equivalent_inputs_has_equivalent_output decoded.input_operands pre (redact_system pre);
       assert(equiv_list input_operand_values redacted_input_operand_values);
 
-      redacting_equivalent_instruction_semantics_on_equivalent_inputs_yields_equivalent_results_somewhere s d inst input_operand_values redacted_input_operand_values;
+      redacting_equivalent_instruction_semantics_on_equivalent_inputs_yields_equivalent_results_somewhere d s inst input_operand_values redacted_input_operand_values;
       assert(equiv_result instruction_output redacted_instruction_output);
 
       lists_are_equivalent_to_their_redaction word input_operand_values 0;
@@ -508,14 +552,14 @@ let decoding_execution_unit_with_redacting_equivalent_instruction_semantics_is_r
 
       assert(equiv_system post2 post_redacted2)
 
-let decoding_execution_unit_with_taint_propagating_instruction_semantics_is_redacting_equivalent (d:decoder) (s:instruction_semantics{is_redacting_equivalent_instruction_semantics_everywhere s d}):
+let decoding_execution_unit_with_taint_propagating_instruction_semantics_is_redacting_equivalent (d:decoder) (s:(instruction_semantics d){is_redacting_equivalent_instruction_semantics_everywhere d s}):
   Lemma (ensures forall(pre:systemState) (inst:word).
                  (equiv_system (decoding_execution_unit d s inst pre)
                                (decoding_execution_unit d s inst (redact_system pre)))
                  \/ (trigger d s inst pre) )
     = ()
 
-let each_decoding_execution_unit_with_taint_propagating_instruction_semantics_is_safe (d:decoder) (s:instruction_semantics{is_redacting_equivalent_instruction_semantics_everywhere s d}):
+let each_decoding_execution_unit_with_taint_propagating_instruction_semantics_is_safe (d:decoder) (s:(instruction_semantics d){is_redacting_equivalent_instruction_semantics_everywhere d s}):
   Lemma (ensures is_safe (decoding_execution_unit d s))
   = decoding_execution_unit_with_taint_propagating_instruction_semantics_is_redacting_equivalent d s;
     redacting_equivalent_execution_units_are_safe (decoding_execution_unit d s)
