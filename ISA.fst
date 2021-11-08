@@ -179,20 +179,42 @@ let sample_semantics (di:decoder_output sample_decoder)
                            memory_ops = [];}
           )
 
+irreducible let trigger (inst:word) (pre:instruction_input (sample_decoder inst)) = False
+
 #set-options "--z3rlimit 10"
-let sample_semantics_are_redacting_equivalent (inst:word)
+let sample_semantics_are_redacting_equivalent_expanded (inst:word)
                                       (pre:instruction_input (sample_decoder inst)):
   Lemma (ensures (equiv_result (sample_semantics (sample_decoder inst) pre)
                                (sample_semantics (sample_decoder inst)
-                                                 (redacted_instruction_inputs_are_instruction_inputs (sample_decoder inst) pre)))) =
+                                                 (redacted_instruction_inputs_are_instruction_inputs
+                                                    (sample_decoder inst) pre)))
+                 \/ trigger inst pre) =
   ()
+
+let sample_semantics_are_redacting_equivalent (inst:word)
+                                      (pre:instruction_input (sample_decoder inst)):
+  Lemma (ensures is_redacting_equivalent_instruction_semantics_somewhere sample_decoder sample_semantics inst pre
+                 \/ trigger inst pre) =
+  ()
+
+let sample_semantics_are_redacting_equivalent_everywhere ():
+  Lemma (ensures is_redacting_equivalent_instruction_semantics_everywhere sample_decoder sample_semantics) =
+  ()
+
+let sample_semantics_are_safe ():
+  Lemma (ensures is_safe (decoding_execution_unit sample_decoder sample_semantics)) =
+    sample_semantics_are_redacting_equivalent_everywhere ();
+    decoding_execution_unit_with_redacting_equivalent_instruction_semantics_is_redacting_equivalent sample_decoder sample_semantics;
+    each_decoding_execution_unit_with_redacting_equivalent_instruction_semantics_is_safe sample_decoder sample_semantics
+
 
 let add_instruction_works_correctly (inst:word)
                                     (pre:(list (maybeBlinded #word)){
                                       (exists(s: systemState). pre = get_operands (sample_decoder inst).input_operands s) /\
                                       FStar.List.length pre = FStar.List.length (sample_decoder inst).input_operands}):
     Lemma (requires parse_opcode inst = 3)
-          (ensures  unwrap (FStar.List.Tot.hd (sample_semantics (sample_decoder inst) pre).register_writes) = (unwrap (FStar.List.Tot.index pre 0)) + (unwrap (FStar.List.Tot.index pre 1)) ) =
+          (ensures  unwrap (FStar.List.Tot.hd (sample_semantics (sample_decoder inst) pre).register_writes)
+                     = (unwrap (FStar.List.Tot.index pre 0)) + (unwrap (FStar.List.Tot.index pre 1)) ) =
     ()
 
 
@@ -202,9 +224,5 @@ let xor_instruction_works_correctly (inst:word)
                                       FStar.List.length pre = FStar.List.length (sample_decoder inst).input_operands}):
     Lemma (requires parse_opcode inst = 7)
           (ensures  unwrap (FStar.List.Tot.hd (sample_semantics (sample_decoder inst) pre).register_writes)
-                    = xor (unwrap (FStar.List.Tot.index pre 0)) (unwrap (FStar.List.Tot.index pre 1)) ) =
-    let di = sample_decoder inst in
-    if (FStar.List.Tot.index di.input_operands 0) = (FStar.List.Tot.index di.input_operands 1) then
-      assert(xor (unwrap (FStar.List.Tot.index pre 0)) (unwrap (FStar.List.Tot.index pre 1)) = 0)
-    else
-      ()
+                     = xor (unwrap (FStar.List.Tot.index pre 0)) (unwrap (FStar.List.Tot.index pre 1)) ) =
+          ()

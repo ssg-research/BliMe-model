@@ -552,14 +552,14 @@ let decoding_execution_unit_with_redacting_equivalent_instruction_semantics_is_r
 
       assert(equiv_system post2 post_redacted2)
 
-let decoding_execution_unit_with_taint_propagating_instruction_semantics_is_redacting_equivalent (d:decoder) (s:(instruction_semantics d){is_redacting_equivalent_instruction_semantics_everywhere d s}):
+let decoding_execution_unit_with_redacting_equivalent_instruction_semantics_is_redacting_equivalent (d:decoder) (s:(instruction_semantics d){is_redacting_equivalent_instruction_semantics_everywhere d s}):
   Lemma (ensures forall(pre:systemState) (inst:word).
                  (equiv_system (decoding_execution_unit d s inst pre)
                                (decoding_execution_unit d s inst (redact_system pre)))
                  \/ (trigger d s inst pre) )
     = ()
 
-let each_decoding_execution_unit_with_taint_propagating_instruction_semantics_is_safe (d:decoder) (s:(instruction_semantics d){is_redacting_equivalent_instruction_semantics_everywhere d s}):
+let each_decoding_execution_unit_with_redacting_equivalent_instruction_semantics_is_safe (d:decoder) (s:(instruction_semantics d){is_redacting_equivalent_instruction_semantics_everywhere d s}):
   Lemma (ensures is_safe (decoding_execution_unit d s))
-  = decoding_execution_unit_with_taint_propagating_instruction_semantics_is_redacting_equivalent d s;
+  = decoding_execution_unit_with_redacting_equivalent_instruction_semantics_is_redacting_equivalent d s;
     redacting_equivalent_execution_units_are_safe (decoding_execution_unit d s)
