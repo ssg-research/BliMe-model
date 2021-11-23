@@ -8,47 +8,18 @@ open Memory
 open InstructionDecoder
 open Value
 
-let rec xor (a b:nat): nat =
-  match a, b with
-    | p, 0 -> p
-    | 0, p -> p
-    | _, _ -> (
-         let next_a = (arithmetic_shift_right a 1) in
-         let next_b = (arithmetic_shift_right b 1) in
-         assert(next_a < a);
-         assert(next_b < b);
-         (if (a % 2) = (b % 2) then 0 else 1) + 2*xor next_a next_b
-         )
-
-let rec xor_each_element_is_own_inverse (x:nat):
-  Lemma (ensures xor x x = 0)
-        [SMTPat (xor x x)] =
-    match x with
-      | 0 -> ()
-      | _ -> xor_each_element_is_own_inverse (arithmetic_shift_right x 1)
-
-let rec land (a b:nat): nat =
-  match a, b with
-    | p, 0 -> 0
-    | 0, p -> 0
-    | _, _ -> (
-         let next_a = (arithmetic_shift_right a 1) in
-         let next_b = (arithmetic_shift_right b 1) in
-         assert(next_a < a);
-         assert(next_b < b);
-         (if (a % 2 = 1) && (b % 2 = 1) then 1 else 0) + 2*land next_a next_b
-         )
+let v = FStar.UInt64.v
 
 (* Instruction format:
  *
  *   opcode | out1 | in1 | in2 | imm
  *  63    61 60  56 55 51 50 46 45 0
  *)
-let parse_opcode (inst:word) = (arithmetic_shift_right inst 61) % 8
-let parse_out1 (inst:word): nat = (arithmetic_shift_right inst 56) % 32
-let parse_in1 (inst:word): nat = (arithmetic_shift_right inst 51) % 32
-let parse_in2 (inst:word): nat = (arithmetic_shift_right inst 45) % 32
-let parse_imm (inst:word): nat = inst % ((pow2 46) - 1)
+let parse_opcode (inst:word) = (arithmetic_shift_right (v inst) 61) % 8
+let parse_out1 (inst:word): nat = (arithmetic_shift_right (v inst) 56) % 32
+let parse_in1 (inst:word): nat = (arithmetic_shift_right (v inst) 51) % 32
+let parse_in2 (inst:word): nat = (arithmetic_shift_right (v inst) 45) % 32
+let parse_imm (inst:word): nat = (v inst) % ((pow2 46) - 1)
 
 let sample_decoder (inst:word): decodedInstruction =
 
@@ -100,7 +71,7 @@ let sample_semantics (di:decoder_output sample_decoder)
     { register_writes = []; memory_ops = if Blinded? address then [] else (
       assert(FStar.List.length di.input_operands = 2);
       match (FStar.List.Tot.index di.input_operands 0), (FStar.List.Tot.index di.input_operands 1) with
-        | Register d, Register s -> [Store (unwrap address) s]
+        | Register d, Register s -> [Store (v (unwrap address)) s]
         | _ -> []
       )}
     (* Load *)
@@ -109,20 +80,20 @@ let sample_semantics (di:decoder_output sample_decoder)
             memory_ops = if Blinded? address
                          then []
                          else match (FStar.List.Tot.index di.input_operands 0), (FStar.List.Tot.index di.input_operands 1) with
-                               | Register d, Register s -> [Load (unwrap address) d]
+                               | Register d, Register s -> [Load (v (unwrap address)) d]
                                | _ -> []}
     (* Branch *)
     | 2 -> ( let pc = FStar.List.Tot.index pre 0 in
             let a = FStar.List.Tot.index pre 1 in
             let b = FStar.List.Tot.index pre 2 in
-            let ref: maybeBlinded #word = Clear #word 0 in
+            let ref: maybeBlinded #word = Clear #word 0uL in
 
             { register_writes = [if a = ref then b else pc]; memory_ops = [] } )
     (* Add *)
     | 3 -> ( assert(FStar.List.length pre = 2);
-            let a = FStar.List.Tot.index pre 0 in
-            let b = FStar.List.Tot.index pre 1 in
-            let result = (unwrap a) + (unwrap b) in
+            let a: maybeBlinded #Cpu.word = FStar.List.Tot.index pre 0 in
+            let b: maybeBlinded #Cpu.word = FStar.List.Tot.index pre 1 in
+            let result: Cpu.word = (FStar.UInt64.add_mod (unwrap a) (unwrap b)) in
             let result = if any_value_is_blinded pre then Blinded result else Clear result in
            {
             register_writes = [result];
@@ -132,7 +103,7 @@ let sample_semantics (di:decoder_output sample_decoder)
     | 4 -> ( assert(FStar.List.length pre = 2);
             let a = FStar.List.Tot.index pre 0 in
             let b = FStar.List.Tot.index pre 1 in
-            let result = max 0 ((unwrap a) - (unwrap b)) in
+            let result: Cpu.word = (FStar.UInt64.sub_mod (unwrap a) (unwrap b)) in
             let result = if any_value_is_blinded pre then Blinded result else Clear result in
            {
             register_writes = [result];
@@ -142,10 +113,8 @@ let sample_semantics (di:decoder_output sample_decoder)
     | 5 -> ( assert(FStar.List.length pre = 2);
             let a = FStar.List.Tot.index pre 0 in
             let b = FStar.List.Tot.index pre 1 in
-            let result = (unwrap a) * (unwrap b) in
-            let result = if (FStar.List.Tot.index di.input_operands 0) = (FStar.List.Tot.index di.input_operands 1) then
-                            Clear 0
-                         else if any_value_is_blinded pre then
+            let result = (FStar.UInt64.mul_mod (unwrap a) (unwrap b)) in
+            let result = if any_value_is_blinded pre then
                             Blinded result
                          else Clear result in
            {
@@ -156,9 +125,9 @@ let sample_semantics (di:decoder_output sample_decoder)
     | 6 -> ( assert(FStar.List.length pre = 2);
             let a: maybeBlinded #word = FStar.List.Tot.index pre 0 in
             let b: maybeBlinded #word = FStar.List.Tot.index pre 1 in
-            let result: nat = land (unwrap a) (unwrap b) in
-            let result = if (a = Clear #word 0) || (b = Clear #word 0) then
-                            Clear 0
+            let result: Cpu.word = FStar.UInt64.logand (unwrap a) (unwrap b) in
+            let result = if (a = Clear #word 0uL) || (b = Clear #word 0uL) then
+                            Clear 0uL
                          else if any_value_is_blinded pre then
                             Blinded result
                          else Clear result in
@@ -169,9 +138,9 @@ let sample_semantics (di:decoder_output sample_decoder)
     | 7 -> ( assert(FStar.List.length pre = 2);
             let a = FStar.List.Tot.index pre 0 in
             let b = FStar.List.Tot.index pre 1 in
-            let result: nat = xor (unwrap a) (unwrap b) in
+            let result: Cpu.word = (FStar.UInt64.logxor (unwrap a) (unwrap b)) in
             let result = if (FStar.List.Tot.index di.input_operands 0) = (FStar.List.Tot.index di.input_operands 1) then
-                            Clear 0
+                            Clear 0uL
                          else if any_value_is_blinded pre then
                             Blinded result
                          else Clear result in
@@ -181,7 +150,7 @@ let sample_semantics (di:decoder_output sample_decoder)
 
 irreducible let trigger (inst:word) (pre:instruction_input (sample_decoder inst)) = False
 
-#set-options "--z3rlimit 10"
+#set-options "--z3rlimit 1000"
 let sample_semantics_are_redacting_equivalent_expanded (inst:word)
                                       (pre:instruction_input (sample_decoder inst)):
   Lemma (ensures (equiv_result (sample_semantics (sample_decoder inst) pre)
@@ -207,6 +176,38 @@ let sample_semantics_are_safe ():
     decoding_execution_unit_with_redacting_equivalent_instruction_semantics_is_redacting_equivalent sample_decoder sample_semantics;
     each_decoding_execution_unit_with_redacting_equivalent_instruction_semantics_is_safe sample_decoder sample_semantics
 
+let sample_semantics_are_minimal (inst:word) (pre:instruction_input (sample_decoder inst)) (i:nat{i < FStar.List.length (sample_decoder inst).output_operands}):
+  Lemma (requires Blinded? (FStar.List.Tot.index (sample_semantics (sample_decoder inst) pre).register_writes i))
+        (ensures (let post = (sample_semantics (sample_decoder inst) pre).register_writes in
+                  let post_i = FStar.List.Tot.index post i in
+                          exists(y:instruction_input (sample_decoder inst)).
+                              (equiv_list y pre)
+                              /\  ~((FStar.List.Tot.index (sample_semantics (sample_decoder inst) y).register_writes i)
+                                   == post_i))) =
+        let di = sample_decoder inst in
+        let post = (sample_semantics di pre).register_writes in
+        match di.opcode with
+          | 0 -> ()
+          | 1 -> ()
+          | 2 -> (
+              assert(FStar.List.length post = 1);
+              assert(i = 0);
+              let post_i = FStar.List.Tot.index post i in
+              assert(post_i = FStar.List.Tot.hd post);
+              let pc = FStar.List.Tot.index pre 0 in
+              let a = FStar.List.Tot.index pre 1 in
+              let b = FStar.List.Tot.index pre 2 in
+              assert((post_i = pc) \/ (post_i = b));
+              assert(~(Blinded? pc));
+              assert(Blinded? post_i ==> post_i = b);
+              admit()
+            )
+          | 3 -> admit()
+          | 4 -> admit()
+          | 5 -> admit()
+          | 6 -> admit()
+          | 7 -> admit()
+
 
 let add_instruction_works_correctly (inst:word)
                                     (pre:(list (maybeBlinded #word)){
@@ -214,9 +215,15 @@ let add_instruction_works_correctly (inst:word)
                                       FStar.List.length pre = FStar.List.length (sample_decoder inst).input_operands}):
     Lemma (requires parse_opcode inst = 3)
           (ensures  unwrap (FStar.List.Tot.hd (sample_semantics (sample_decoder inst) pre).register_writes)
-                     = (unwrap (FStar.List.Tot.index pre 0)) + (unwrap (FStar.List.Tot.index pre 1)) ) =
+                     = (FStar.UInt64.add_mod (unwrap (FStar.List.Tot.index pre 0)) (unwrap (FStar.List.Tot.index pre 1)))) =
     ()
 
+
+let xor_with_self_yields_zero (a:Cpu.word):
+  Lemma (ensures (FStar.UInt64.logxor a a) = 0uL) =
+    let value: FStar.UInt.uint_t 64 = v a in
+    FStar.UInt.logxor_self #64 value;
+    assert(FStar.UInt.logxor #64 value value == 0)
 
 let xor_instruction_works_correctly (inst:word)
                                     (pre:(list (maybeBlinded #word)){
@@ -224,5 +231,15 @@ let xor_instruction_works_correctly (inst:word)
                                       FStar.List.length pre = FStar.List.length (sample_decoder inst).input_operands}):
     Lemma (requires parse_opcode inst = 7)
           (ensures  unwrap (FStar.List.Tot.hd (sample_semantics (sample_decoder inst) pre).register_writes)
-                     = xor (unwrap (FStar.List.Tot.index pre 0)) (unwrap (FStar.List.Tot.index pre 1)) ) =
-          ()
+                     = FStar.UInt64.logxor (unwrap (FStar.List.Tot.index pre 0)) (unwrap (FStar.List.Tot.index pre 1)) ) =
+          let di = sample_decoder inst in
+          let a = FStar.List.Tot.index pre 0 in
+          let b = FStar.List.Tot.index pre 1 in
+          let outputs = (sample_semantics (sample_decoder inst) pre).register_writes in
+          if (FStar.List.Tot.index di.input_operands 0) = (FStar.List.Tot.index di.input_operands 1) then (
+            assert(a == b);
+            xor_with_self_yields_zero (unwrap a) )
+          else if any_value_is_blinded pre then
+            assert(outputs = [Blinded (FStar.UInt64.logxor (unwrap a) (unwrap b))])
+          else
+            assert(outputs = [Clear (FStar.UInt64.logxor (unwrap a) (unwrap b))])

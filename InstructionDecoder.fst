@@ -19,25 +19,25 @@ let rec get_operands (operands:list operand) (state:systemState): r:(list (maybe
                   | PC -> Clear state.pc
                   | Register n -> if n < FStar.List.length state.registers then
                                     (FStar.List.Tot.index state.registers n)
-                                 else Clear 0
+                                 else Clear 0uL
                 ) :: get_operands tl state
 
 let get_operands_with_one_operand_on_redacted_input_has_redacted_output (op: operand) (state:systemState):
-  Lemma (ensures get_operands [op] (redact_system state) = redact_list (get_operands [op] state) 0) =
+  Lemma (ensures get_operands [op] (redact_system state) = redact_list (get_operands [op] state) 0uL) =
   let head = FStar.List.Tot.hd (get_operands [op] state) in
   let head_of_redacted = FStar.List.Tot.hd (get_operands [op] (redact_system state)) in
   match op with
     | PC -> ()
     | Register n -> (
-                   lists_are_equivalent_to_their_redaction _ state.registers 0;
-                   equal_lists_are_equivalent _ (redact_system state).registers  (redact_list state.registers 0);
+                   lists_are_equivalent_to_their_redaction _ state.registers 0uL;
+                   equal_lists_are_equivalent _ (redact_system state).registers  (redact_list state.registers 0uL);
                    equivalent_lists_have_equal_lengths state.registers (redact_system state).registers;
                    if n >= FStar.List.length state.registers then ()
                    else ()
       )
 
 let rec get_operands_on_redacted_input_has_redacted_output (operands:list operand) (state:systemState):
-  Lemma (ensures get_operands operands (redact_system state) = redact_list (get_operands operands state) 0)
+  Lemma (ensures get_operands operands (redact_system state) = redact_list (get_operands operands state) 0uL)
         [SMTPat (get_operands operands (redact_system state))] =
   (
     match operands with
@@ -46,14 +46,14 @@ let rec get_operands_on_redacted_input_has_redacted_output (operands:list operan
                     let head_of_redacted = FStar.List.Tot.hd (get_operands operands (redact_system state)) in
 
                     get_operands_with_one_operand_on_redacted_input_has_redacted_output hd state;
-                    assert(redact head 0 = head_of_redacted);
+                    assert(redact head 0uL = head_of_redacted);
 
-                    let redacted_head = redact head 0 in
+                    let redacted_head = redact head 0uL in
 
                     get_operands_on_redacted_input_has_redacted_output tl state;
-                    assert(get_operands tl (redact_system state) = redact_list (get_operands tl state) 0);
+                    assert(get_operands tl (redact_system state) = redact_list (get_operands tl state) 0uL);
                     assert((head_of_redacted :: (get_operands tl (redact_system state)))
-                         = (redacted_head :: (redact_list (get_operands tl state) 0)))
+                         = (redacted_head :: (redact_list (get_operands tl state) 0uL)))
                   )
 )
 
@@ -67,7 +67,7 @@ let rec get_operands_on_equivalent_inputs_has_equivalent_output (operands:list o
                     | PC -> (
                          let head1 = FStar.List.Tot.hd (get_operands operands state1) in
                          let head2 = FStar.List.Tot.hd (get_operands operands state2) in
-                         equal_values_are_equivalent nat head1 head2;
+                         equal_values_are_equivalent Cpu.word head1 head2;
                          head1, head2
                          )
                     | Register n -> (
@@ -185,10 +185,11 @@ type instruction_input (di:decodedInstruction) =
      pre:(list (maybeBlinded #word)){(exists(s: systemState). pre = get_operands di.input_operands s)
                                     /\ FStar.List.length pre = FStar.List.length di.input_operands}
 
+
 let redacted_instruction_inputs_are_instruction_inputs (di:decodedInstruction) (pre:instruction_input di): instruction_input di
   = assert(exists (s:systemState). (pre = get_operands di.input_operands s /\
-             (get_operands di.input_operands (redact_system s) = redact_list (get_operands di.input_operands s) 0  )  ) );
-    redact_list pre 0
+             (get_operands di.input_operands (redact_system s) = redact_list (get_operands di.input_operands s) 0uL  )  ) );
+    redact_list pre 0uL
 
 type decoder_output (d:decoder) = (di:decodedInstruction{exists(inst:word). di = d inst})
 
@@ -199,7 +200,7 @@ let is_redacting_equivalent_instruction_semantics_somewhere
       (s:instruction_semantics d)
       (inst:word)
       (input:instruction_input (d inst)) =
-    redaction_preserves_length word input 0;
+    redaction_preserves_length word input 0uL;
     let redacted_input = redacted_instruction_inputs_are_instruction_inputs (d inst) input in
     (equiv_result (s (d inst) input) (s (d inst) redacted_input))
 
@@ -216,10 +217,10 @@ let redacting_equivalent_instruction_semantics_on_equivalent_inputs_yields_equiv
         (ensures  equiv_result (s (d inst) input1) (s (d inst) input2)) =
   let result1 = (s (d inst) input1) in
   let result2 = (s (d inst) input2) in
-  let redacted_result1 = (s (d inst) (redact_list input1 0)) in
-  let redacted_result2 = (s (d inst) (redact_list input2 0)) in
+  let redacted_result1 = (s (d inst) (redact_list input1 0uL)) in
+  let redacted_result2 = (s (d inst) (redact_list input2 0uL)) in
 
-  equivalent_lists_have_equal_redactions word input1 input2 0;
+  equivalent_lists_have_equal_redactions word input1 input2 0uL;
   assert(redacted_result1 = redacted_result2);
   equal_results_are_equivalent redacted_result1 redacted_result2;
 
@@ -262,17 +263,37 @@ let rec replacing_in_equivalent_lists_with_equivalent_value_yields_equivalent_li
     | _, h1 :: t1, h2 :: t2 -> replacing_in_equivalent_lists_with_equivalent_value_yields_equivalent_lists t1 t2 (n-1) v1 v2
     | _ -> ()
 
+let rec replacing_then_reading_yields_original_value (orig: list (maybeBlinded #word)) (v:maybeBlinded #word) (n:nat):
+  Lemma (requires n < FStar.List.length orig)
+        (ensures FStar.List.Tot.index (replace_list_value orig n v) n = v)
+    = match n, orig with
+      | _, [] -> ()
+      | 0, _ -> ()
+      | _, hd :: tl -> replacing_then_reading_yields_original_value tl v (n-1)
+
 let set_one_operand (operand:operand) (value:maybeBlinded #word) (state:systemState): systemState =
     match operand with
       | PC -> (match value with
-               | Clear v -> if v < FStar.List.length state.memory then { state with pc = v } else {state with pc = 0}
-               | Blinded b -> {state with pc = 0})
+               | Clear v -> if FStar.UInt64.v v < FStar.List.length state.memory then { state with pc = v } else {state with pc = 0uL}
+               | Blinded b -> {state with pc = 0uL})
       | Register n -> if n < FStar.List.length state.registers then
                         { state with registers =
-                          replace_list_value state.registers n value 
+                          replace_list_value state.registers n value
                         }
                      else
                        state
+
+let setting_and_getting_one_non_faulting_operand_value_yields_original_value (operand:operand) (value:maybeBlinded #word) (state:systemState):
+  Lemma (requires ~(match operand with
+                     | PC -> (match value with
+                              | Blinded v -> True
+                              | Clear v -> FStar.UInt64.v v >= FStar.List.length state.memory)
+                     | Register n -> n >= FStar.List.length state.registers))
+        (ensures get_operands [operand] (set_one_operand operand value state) = [value]) =
+  let r = get_operands [operand] (set_one_operand operand value state) in
+  match operand with
+    | PC -> ()
+    | Register n -> replacing_then_reading_yields_original_value state.registers value n
 
 
 let setting_single_equivalent_operand_values_on_equivalent_systems_yields_equivalent_systems
@@ -327,6 +348,7 @@ let rec setting_equivalent_operand_values_on_equivalent_systems_yields_equivalen
           assert(equiv_system applied_tail1 applied_tail2)
         )
       | _ -> ()
+
 
 let complete_one_memory_transaction (op:storage_operation) (pre:systemState) =
   match op with
@@ -515,7 +537,7 @@ let decoding_execution_unit_with_redacting_equivalent_instruction_semantics_is_r
       redacting_equivalent_instruction_semantics_on_equivalent_inputs_yields_equivalent_results_somewhere d s inst input_operand_values redacted_input_operand_values;
       assert(equiv_result instruction_output redacted_instruction_output);
 
-      lists_are_equivalent_to_their_redaction word input_operand_values 0;
+      lists_are_equivalent_to_their_redaction word input_operand_values 0uL;
 
       assert(equiv_list input_operand_values (get_operands decoded.input_operands (redact_system pre)));
 

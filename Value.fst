@@ -4,7 +4,7 @@ type maybeBlinded (#t:Type) =
    | Clear   : v:t -> maybeBlinded #t
    | Blinded : v:t -> maybeBlinded #t
 
-let unwrap (#t:Type) (mb:maybeBlinded #t) =
+let unwrap (#t:Type) (mb:maybeBlinded #t): t =
   match mb with
    | Clear v -> v
    | Blinded v -> v

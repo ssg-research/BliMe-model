@@ -4,12 +4,12 @@ module Cpu
 open Memory
 open Value
 
-type address = nat
-type word = nat
+type address = FStar.UInt64.t
+type word = FStar.UInt64.t
 
 type systemState
-     = { memory: memoryState;
-             pc: (pc:nat{pc < FStar.List.length memory});
+     = { memory: (memory:memoryState{FStar.UInt.fits (FStar.List.length memory) FStar.UInt64.n});
+             pc: (pc:word{FStar.UInt64.v pc < FStar.List.length memory});
       registers: memoryState}
 
 (* Equivalence *)
@@ -46,24 +46,24 @@ let system_equivalence_is_symmetric (lhs rhs:systemState):
  *******************************************************************************)
 
 let redact_system (s:systemState): systemState = {
-    pc = (redaction_preserves_length _ s.memory 0;
-          let redacted_memory = redact_list s.memory 0 in
+    pc = (redaction_preserves_length _ s.memory 0uL;
+          let redacted_memory = redact_list s.memory 0uL in
           s.pc);
-    registers = (redaction_preserves_length _ s.registers 0;
-                 redact_list s.registers 0);
-    memory    = redact_list s.memory 0
+    registers = (redaction_preserves_length _ s.registers 0uL;
+                 redact_list s.registers 0uL);
+    memory    = redact_list s.memory 0uL
     }
 
 
 let systems_are_equivalent_to_their_redaction (s:systemState):
     Lemma (ensures equiv_system s (redact_system s))
-    = lists_are_equivalent_to_their_redaction  _ s.registers 0;
-      lists_are_equivalent_to_their_redaction  _ s.memory 0
+    = lists_are_equivalent_to_their_redaction  _ s.registers 0uL;
+      lists_are_equivalent_to_their_redaction  _ s.memory 0uL
 
 let equivalent_systems_have_equal_redactions (s1:systemState) (s2:systemState):
     Lemma (ensures (equiv_system s1 s2) <==> ((redact_system s1) == (redact_system s2)))
-    = equivalent_lists_have_equal_redactions _ s1.registers s2.registers 0;
-      equivalent_lists_have_equal_redactions _ s1.memory s2.memory 0
+    = equivalent_lists_have_equal_redactions _ s1.registers s2.registers 0uL;
+      equivalent_lists_have_equal_redactions _ s1.memory s2.memory 0uL
 
 
 (*******************************************************************************
