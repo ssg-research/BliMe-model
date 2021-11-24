@@ -19,7 +19,7 @@ let parse_opcode (inst:word) = (arithmetic_shift_right (v inst) 61) % 8
 let parse_out1 (inst:word): nat = (arithmetic_shift_right (v inst) 56) % 32
 let parse_in1 (inst:word): nat = (arithmetic_shift_right (v inst) 51) % 32
 let parse_in2 (inst:word): nat = (arithmetic_shift_right (v inst) 45) % 32
-let parse_imm (inst:word): nat = (v inst) % ((pow2 46) - 1)
+let parse_imm (inst:word): Cpu.word = (FStar.UInt64.logand inst (FStar.UInt64.sub (FStar.UInt64.shift_left 1uL 46ul) 1uL))
 
 let sample_decoder (inst:word): decodedInstruction =
 
@@ -27,6 +27,7 @@ let sample_decoder (inst:word): decodedInstruction =
   let out1 = parse_out1 inst in
   let in1 = parse_in1 inst in
   let in2 = parse_in2 inst in
+  let imm = parse_imm inst in
   match opcode with
   (* Store *)
     | 0 -> { opcode; input_operands = [ Register in1; Register in2 ]; output_operands = [] }
@@ -35,7 +36,7 @@ let sample_decoder (inst:word): decodedInstruction =
   (* Branch *)
     | 2 -> { opcode; input_operands = [PC; Register in1; Register in2]; output_operands = [PC] }
   (* Arithmetic *)
-    | 3 -> { opcode; input_operands = [ Register in1; Register in2 ]; output_operands = [ Register out1 ] }
+    | 3 -> { opcode; input_operands = [ Register in1; Register in2; Immediate imm ]; output_operands = [ Register out1 ] }
     | 4 -> { opcode; input_operands = [ Register in1; Register in2 ]; output_operands = [ Register out1 ] }
     | 5 -> { opcode; input_operands = [ Register in1; Register in2 ]; output_operands = [ Register out1 ] }
     | 6 -> { opcode; input_operands = [ Register in1; Register in2 ]; output_operands = [ Register out1 ] }
@@ -47,7 +48,7 @@ let sample_decoded_instruction_length (inst:word):
                      | 0 -> 2
                      | 1 -> 2
                      | 2 -> 3
-                     | 3 -> 2
+                     | 3 -> 3
                      | 4 -> 2
                      | 5 -> 2
                      | 6 -> 2
@@ -59,6 +60,7 @@ let sample_decoded_instruction_length (inst:word):
 
 
 val sample_semantics: instruction_semantics sample_decoder
+
 let sample_semantics (di:decoder_output sample_decoder)
                      (pre:(list (maybeBlinded #word)){
                        (exists(s: systemState). pre = get_operands di.input_operands s) /\
@@ -88,9 +90,9 @@ let sample_semantics (di:decoder_output sample_decoder)
             let b = FStar.List.Tot.index pre 2 in
             let ref: maybeBlinded #word = Clear #word 0uL in
 
-            { register_writes = [if a = ref then b else pc]; memory_ops = [] } )
+            { register_writes = [if Blinded? a then Clear 0uL else if a = ref then b else pc]; memory_ops = [] } )
     (* Add *)
-    | 3 -> ( assert(FStar.List.length pre = 2);
+    | 3 -> ( assert(FStar.List.length pre = 3);
             let a: maybeBlinded #Cpu.word = FStar.List.Tot.index pre 0 in
             let b: maybeBlinded #Cpu.word = FStar.List.Tot.index pre 1 in
             let result: Cpu.word = (FStar.UInt64.add_mod (unwrap a) (unwrap b)) in

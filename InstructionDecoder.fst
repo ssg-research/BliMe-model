@@ -7,6 +7,7 @@ open Value
 type operand =
   | PC
   | Register: n:nat -> operand
+  | Immediate: n:Cpu.word -> operand
 
 type storage_operation =
   | Load: address:nat -> dest:nat -> storage_operation
@@ -20,6 +21,7 @@ let rec get_operands (operands:list operand) (state:systemState): r:(list (maybe
                   | Register n -> if n < FStar.List.length state.registers then
                                     (FStar.List.Tot.index state.registers n)
                                  else Clear 0uL
+                  | Immediate n -> Clear n
                 ) :: get_operands tl state
 
 let get_operands_with_one_operand_on_redacted_input_has_redacted_output (op: operand) (state:systemState):
@@ -35,6 +37,7 @@ let get_operands_with_one_operand_on_redacted_input_has_redacted_output (op: ope
                    if n >= FStar.List.length state.registers then ()
                    else ()
       )
+    | Immediate n -> ()
 
 let rec get_operands_on_redacted_input_has_redacted_output (operands:list operand) (state:systemState):
   Lemma (ensures get_operands operands (redact_system state) = redact_list (get_operands operands state) 0uL)
@@ -79,7 +82,8 @@ let rec get_operands_on_equivalent_inputs_has_equivalent_output (operands:list o
                         else ();
 
                         FStar.List.Tot.hd (get_operands operands state1), FStar.List.Tot.hd (get_operands operands state2)
-                        ) in
+                        )
+                    | Immediate n -> (Clear n, Clear n) in
 
                     assert(equiv result_hd1 result_hd2);
                     get_operands_on_equivalent_inputs_has_equivalent_output tl state1 state2
@@ -274,7 +278,10 @@ let rec replacing_then_reading_yields_original_value (orig: list (maybeBlinded #
 let set_one_operand (operand:operand) (value:maybeBlinded #word) (state:systemState): systemState =
     match operand with
       | PC -> (match value with
-               | Clear v -> if FStar.UInt64.v v < FStar.List.length state.memory then { state with pc = v } else {state with pc = 0uL}
+               | Clear v -> if FStar.UInt64.v v < FStar.List.length state.memory then
+                              { state with pc = v }
+                           else
+                              { state with pc = 0uL }
                | Blinded b -> {state with pc = 0uL})
       | Register n -> if n < FStar.List.length state.registers then
                         { state with registers =
@@ -282,13 +289,15 @@ let set_one_operand (operand:operand) (value:maybeBlinded #word) (state:systemSt
                         }
                      else
                        state
+      | Immediate n -> state
 
 let setting_and_getting_one_non_faulting_operand_value_yields_original_value (operand:operand) (value:maybeBlinded #word) (state:systemState):
   Lemma (requires ~(match operand with
                      | PC -> (match value with
                               | Blinded v -> True
                               | Clear v -> FStar.UInt64.v v >= FStar.List.length state.memory)
-                     | Register n -> n >= FStar.List.length state.registers))
+                     | Register n -> n >= FStar.List.length state.registers
+                     | Immediate n -> True))
         (ensures get_operands [operand] (set_one_operand operand value state) = [value]) =
   let r = get_operands [operand] (set_one_operand operand value state) in
   match operand with
@@ -318,6 +327,7 @@ let setting_single_equivalent_operand_values_on_equivalent_systems_yields_equiva
           else
             replacing_in_equivalent_lists_with_equivalent_value_yields_equivalent_lists state1.registers state2.registers n value1 value2
         )
+      | Immediate n -> ()
 
 
 let rec set_operands (operands:list operand) (values:(list (maybeBlinded #word)){FStar.List.length operands = FStar.List.length values}) (state:systemState): systemState =
@@ -514,7 +524,13 @@ let decoding_execution_unit (d:decoder) (s:instruction_semantics d) (inst:word) 
     let input_operand_values = (get_operands decoded.input_operands pre) in
     let instruction_output = (s decoded input_operand_values) in
     let output_operand_values = instruction_output.register_writes in
-    let intermediate_with_updated_registers = set_operands decoded.output_operands output_operand_values pre in
+    let pre_with_incremented_pc = { pre with pc = (
+                                        if FStar.UInt64.v pre.pc < FStar.List.length pre.memory - 1 then
+                                          FStar.UInt64.add pre.pc 1uL
+                                        else
+                                          0uL
+                                        ) } in
+    let intermediate_with_updated_registers = set_operands decoded.output_operands output_operand_values pre_with_incremented_pc in
     complete_memory_transactions instruction_output.memory_ops intermediate_with_updated_registers
 
 irreducible let trigger (d:decoder) (s:instruction_semantics d) (inst:word) (pre:systemState) = False
@@ -529,6 +545,12 @@ let decoding_execution_unit_with_redacting_equivalent_instruction_semantics_is_r
       (* let redacted_input_operand_values = (redact_list (get_operands decoded.input_operands pre) 0) in *)
       let instruction_output = (s decoded input_operand_values) in
       let redacted_instruction_output = (s decoded redacted_input_operand_values) in
+      let pre_with_incremented_pc = { pre with pc = (
+                                      if FStar.UInt64.v pre.pc < FStar.List.length pre.memory - 1 then
+                                         FStar.UInt64.add pre.pc 1uL
+                                      else
+                                        0uL
+                                      ) } in
 
       systems_are_equivalent_to_their_redaction pre;
       get_operands_on_equivalent_inputs_has_equivalent_output decoded.input_operands pre (redact_system pre);
@@ -546,17 +568,17 @@ let decoding_execution_unit_with_redacting_equivalent_instruction_semantics_is_r
 
       assert(equiv_list instruction_output.register_writes redacted_instruction_output.register_writes);
 
-      let post1 = set_operands decoded.output_operands instruction_output.register_writes pre in
-      let post_redacted1 = set_operands decoded.output_operands redacted_instruction_output.register_writes (redact_system pre) in
+      let post1 = set_operands decoded.output_operands instruction_output.register_writes pre_with_incremented_pc in
+      let post_redacted1 = set_operands decoded.output_operands redacted_instruction_output.register_writes (redact_system pre_with_incremented_pc) in
 
-      systems_are_equivalent_to_their_redaction pre;
-      assert(equiv_system pre (redact_system pre));
+      systems_are_equivalent_to_their_redaction pre_with_incremented_pc;
+      assert(equiv_system pre_with_incremented_pc (redact_system pre_with_incremented_pc));
 
       setting_equivalent_operand_values_on_equivalent_systems_yields_equivalent_systems
         decoded.output_operands instruction_output.register_writes
         redacted_instruction_output.register_writes
-        pre
-        (redact_system pre);
+        pre_with_incremented_pc
+        (redact_system pre_with_incremented_pc);
 
       assert(equiv_system post1 post_redacted1);
 
