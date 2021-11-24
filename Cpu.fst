@@ -83,7 +83,7 @@ val step
 let step exec pre_state =
     let instruction = Memory.nth pre_state.memory pre_state.pc in
         match instruction with
-        | Blinded _ -> pre_state
+        | Blinded _ -> { pre_state with pc = 0uL }
         | Clear inst -> exec inst pre_state
 
 (*******************************************************************************
