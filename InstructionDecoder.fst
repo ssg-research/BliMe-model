@@ -13,7 +13,10 @@ type storage_operation =
   | Load: address:nat -> dest:nat -> storage_operation
   | Store: address:nat -> src:nat -> storage_operation
 
-let rec get_operands (operands:list operand) (state:systemState): r:(list (maybeBlinded #word)){FStar.List.length r = FStar.List.length operands} =
+type cache_policy (n:memory_size) =
+       (cache_state n) -> storage_operation -> (cache_state n)
+
+let rec get_operands (#n #r: memory_size) (operands:list operand) (state:systemState #n #r): rv:(list (maybeBlinded #word)){FStar.List.length rv = FStar.List.length operands} =
   match operands with
     | Nil -> Nil
     | hd :: tl -> (match hd with
@@ -24,7 +27,7 @@ let rec get_operands (operands:list operand) (state:systemState): r:(list (maybe
                   | Immediate n -> Clear n
                 ) :: get_operands tl state
 
-let get_operands_with_one_operand_on_redacted_input_has_redacted_output (op: operand) (state:systemState):
+let get_operands_with_one_operand_on_redacted_input_has_redacted_output (#n #r: memory_size) (op: operand) (state:systemState #n #r):
   Lemma (ensures get_operands [op] (redact_system state) = redact_list (get_operands [op] state) 0uL) =
   let head = FStar.List.Tot.hd (get_operands [op] state) in
   let head_of_redacted = FStar.List.Tot.hd (get_operands [op] (redact_system state)) in
@@ -39,7 +42,7 @@ let get_operands_with_one_operand_on_redacted_input_has_redacted_output (op: ope
       )
     | Immediate n -> ()
 
-let rec get_operands_on_redacted_input_has_redacted_output (operands:list operand) (state:systemState):
+let rec get_operands_on_redacted_input_has_redacted_output (#n #r: memory_size) (operands:list operand) (state:systemState #n #r):
   Lemma (ensures get_operands operands (redact_system state) = redact_list (get_operands operands state) 0uL)
         [SMTPat (get_operands operands (redact_system state))] =
   (
@@ -60,7 +63,7 @@ let rec get_operands_on_redacted_input_has_redacted_output (operands:list operan
                   )
 )
 
-let rec get_operands_on_equivalent_inputs_has_equivalent_output (operands:list operand) (state1 state2:systemState):
+let rec get_operands_on_equivalent_inputs_has_equivalent_output (#m #q #n #r: memory_size) (operands:list operand) (state1: systemState #m #q) (state2:systemState #n #r):
   Lemma (requires (equiv_system state1 state2))
         (ensures  (equiv_list (get_operands operands state1)
                               (get_operands operands state2)))
@@ -185,38 +188,40 @@ let result_equivalence_is_transitive (#di:decodedInstruction) (lhs mid rhs:(inst
   list_equivalence_is_transitive word lhs.register_writes mid.register_writes rhs.register_writes;
   storage_operation_list_equivalence_is_transitive lhs.memory_ops mid.memory_ops rhs.memory_ops
 
-type instruction_input (di:decodedInstruction) =
-     pre:(list (maybeBlinded #word)){(exists(s: systemState). pre = get_operands di.input_operands s)
+type instruction_input (#n #r: memory_size) (di:decodedInstruction) =
+     pre:(list (maybeBlinded #word)){(exists(s: systemState #n #r). pre = get_operands di.input_operands s)
                                     /\ FStar.List.length pre = FStar.List.length di.input_operands}
 
 
-let redacted_instruction_inputs_are_instruction_inputs (di:decodedInstruction) (pre:instruction_input di): instruction_input di
-  = assert(exists (s:systemState). (pre = get_operands di.input_operands s /\
-             (get_operands di.input_operands (redact_system s) = redact_list (get_operands di.input_operands s) 0uL  )  ) );
+let redacted_instruction_inputs_are_instruction_inputs  (#n #r: memory_size) (di:decodedInstruction) (pre:instruction_input #n #r di): instruction_input #n #r di
+  = assert(exists (s:systemState). (pre = get_operands #n #r di.input_operands s /\
+             (get_operands #n #r di.input_operands (redact_system s) = redact_list (get_operands di.input_operands s) 0uL  )  ) );
     redact_list pre 0uL
 
 type decoder_output (d:decoder) = (di:decodedInstruction{exists(inst:word). di = d inst})
 
-type instruction_semantics (d:decoder) = (di: decoder_output d) -> (pre:instruction_input di) -> instruction_result di
+type instruction_semantics (#n #r: memory_size) (d:decoder) = (di: decoder_output d) -> (pre:instruction_input #n #r di) -> instruction_result di
 
 let is_redacting_equivalent_instruction_semantics_somewhere
+      (#n #r: memory_size)
       (d:decoder)
-      (s:instruction_semantics d)
+      (s:instruction_semantics #n #r d)
       (inst:word)
-      (input:instruction_input (d inst)) =
+      (input:instruction_input #n #r (d inst)) =
     redaction_preserves_length word input 0uL;
     let redacted_input = redacted_instruction_inputs_are_instruction_inputs (d inst) input in
     (equiv_result (s (d inst) input) (s (d inst) redacted_input))
 
-let is_redacting_equivalent_instruction_semantics_everywhere (d:decoder) (s:instruction_semantics d) =
-    forall (inst:word) (pre:instruction_input (d inst)).
+let is_redacting_equivalent_instruction_semantics_everywhere (#n #r: memory_size) (d:decoder) (s:instruction_semantics #n #r d) =
+    forall (inst:word) (pre:instruction_input #n #r (d inst)).
                 is_redacting_equivalent_instruction_semantics_somewhere d s inst pre
 
 let redacting_equivalent_instruction_semantics_on_equivalent_inputs_yields_equivalent_results_somewhere
+      (#n #r: memory_size)
       (d:decoder)
-      (s:instruction_semantics d)
+      (s:instruction_semantics #n #r d)
       (inst:word)
-      (input1 input2:instruction_input (d inst)):
+      (input1 input2:instruction_input #n #r (d inst)):
   Lemma (requires (is_redacting_equivalent_instruction_semantics_everywhere d s) /\ (equiv_list input1 input2))
         (ensures  equiv_result (s (d inst) input1) (s (d inst) input2)) =
   let result1 = (s (d inst) input1) in
@@ -275,7 +280,7 @@ let rec replacing_then_reading_yields_original_value (orig: list (maybeBlinded #
       | 0, _ -> ()
       | _, hd :: tl -> replacing_then_reading_yields_original_value tl v (n-1)
 
-let set_one_operand (operand:operand) (value:maybeBlinded #word) (state:systemState): systemState =
+let set_one_operand (#n #r: memory_size) (operand:operand) (value:maybeBlinded #word) (state:systemState #n #r): systemState #n #r =
     match operand with
       | PC -> (match value with
                | Clear v -> if FStar.UInt64.v v < FStar.List.length state.memory then
@@ -291,7 +296,7 @@ let set_one_operand (operand:operand) (value:maybeBlinded #word) (state:systemSt
                        state
       | Immediate n -> state
 
-let setting_and_getting_one_non_faulting_operand_value_yields_original_value (operand:operand) (value:maybeBlinded #word) (state:systemState):
+let setting_and_getting_one_non_faulting_operand_value_yields_original_value (#n #r: memory_size) (operand:operand) (value:maybeBlinded #word) (state:systemState #n #r):
   Lemma (requires ~(match operand with
                      | PC -> (match value with
                               | Blinded v -> True
@@ -306,9 +311,10 @@ let setting_and_getting_one_non_faulting_operand_value_yields_original_value (op
 
 
 let setting_single_equivalent_operand_values_on_equivalent_systems_yields_equivalent_systems
+    (#n #r: memory_size)
     (operand       :operand)
     (value1 value2 :(maybeBlinded #word))
-    (state1 state2 :systemState):
+    (state1 state2 :systemState #n #r):
     Lemma (requires (equiv_system state1 state2) /\ (equiv value1 value2))
           (ensures  (equiv_system (set_one_operand operand value1 state1) (set_one_operand operand value2 state2))) =
     match operand with
@@ -330,17 +336,18 @@ let setting_single_equivalent_operand_values_on_equivalent_systems_yields_equiva
       | Immediate n -> ()
 
 
-let rec set_operands (operands:list operand) (values:(list (maybeBlinded #word)){FStar.List.length operands = FStar.List.length values}) (state:systemState): systemState =
+let rec set_operands (#n #r: memory_size) (operands:list operand) (values:(list (maybeBlinded #word)){FStar.List.length operands = FStar.List.length values}) (state:systemState #n #r): systemState #n #r =
     match operands, values with
       | o :: tl_o, v :: tl_v -> set_operands tl_o tl_v (set_one_operand o v state)
       | _ -> state
 
-
+#set-options "--z3rlimit 1000"
 let rec setting_equivalent_operand_values_on_equivalent_systems_yields_equivalent_systems
+    (#n #r: memory_size)
     (operands       :list operand)
     (values1:(list (maybeBlinded #word)){FStar.List.length operands = FStar.List.length values1})
     (values2:(list (maybeBlinded #word)){FStar.List.length operands = FStar.List.length values2})
-    (state1  state2 :systemState):
+    (state1: systemState #n #r)  (state2 :systemState #n #r):
     Lemma (requires (equiv_system state1 state2) /\ (equiv_list values1 values2))
           (ensures  (equiv_system (set_operands operands values1 state1) (set_operands operands values2 state2))) =
     match operands, values1, values2 with
@@ -360,29 +367,38 @@ let rec setting_equivalent_operand_values_on_equivalent_systems_yields_equivalen
       | _ -> ()
 
 
-let complete_one_memory_transaction (op:storage_operation) (pre:systemState) =
+let complete_one_memory_transaction (#n #r: memory_size) (op:storage_operation) (pre:systemState #n #r) (cp:cache_policy n): systemState #n #r =
   match op with
-    | Load address register -> if register < FStar.List.length pre.registers
-                                  && address < FStar.List.length pre.memory then
-                                  { pre with registers = replace_list_value pre.registers register (FStar.List.Tot.index pre.memory address) }
-                               else pre
-    | Store address register -> if register < FStar.List.length pre.registers
-                                  && address < FStar.List.length pre.memory then
-                                  { pre with memory = replace_list_value pre.memory address (FStar.List.Tot.index pre.registers register) }
-                                else pre
+      | Load address register -> if register < FStar.List.length pre.registers
+                                    && address < FStar.List.length pre.memory then
+                                    { pre with registers = replace_list_value pre.registers register (FStar.List.Tot.index pre.memory address);
+                                               cache_lines = cp pre.cache_lines op }
+                                 else pre
+      | Store address register -> if register < FStar.List.length pre.registers
+                                    && address < FStar.List.length pre.memory then
+                                    { pre with memory = replace_list_value pre.memory address (FStar.List.Tot.index pre.registers register);
+                                               cache_lines = cp pre.cache_lines op }
+                                 else pre
 
-let rec complete_memory_transactions (op:list storage_operation) (pre:systemState) =
+let rec complete_memory_transactions (#n #r: memory_size) (op:list storage_operation) (pre:systemState #n #r) (cp:cache_policy n) =
   match op with
-    | hd :: tl -> complete_memory_transactions tl (complete_one_memory_transaction hd pre)
+    | hd :: tl -> (let post = (complete_one_memory_transaction hd pre cp) in
+                 complete_memory_transactions tl post cp)
     | [] -> pre
 
 let completing_single_memory_transactions_on_equivalent_systems_yields_equivalent_systems
+    (#m #q #n #r: memory_size)
     (op1:storage_operation) (op2:storage_operation)
-    (state1 state2 :systemState):
+    (state1:systemState #m #q) (state2 :systemState #n #r)
+    (cp:cache_policy m):
     Lemma (requires (equiv_system state1 state2) /\ (equiv_storage_operation op1 op2))
-          (ensures  (equiv_system (complete_one_memory_transaction op1 state1) (complete_one_memory_transaction op2 state2))) =
-                 let post1 = (complete_one_memory_transaction op1 state1) in
-                 let post2 = (complete_one_memory_transaction op2 state2) in
+          (ensures  (equiv_system (complete_one_memory_transaction op1 state1 cp) (complete_one_memory_transaction op2 state2 cp))) =
+                 let post1 = (complete_one_memory_transaction op1 state1 cp) in
+                 let post2 = (complete_one_memory_transaction op2 state2 cp) in
+
+                 assert(m = n /\ q = r);
+                 assert(state1.cache_lines = state2.cache_lines);
+                 assert(post1.cache_lines = post2.cache_lines);
 
                  equivalent_lists_have_equal_lengths state1.memory state2.memory;
                  equivalent_lists_have_equal_lengths state1.registers state2.registers;
@@ -453,16 +469,19 @@ let completing_single_memory_transactions_on_equivalent_systems_yields_equivalen
                  assert(equiv_system post1 post2)
 
 let rec completing_equivalent_memory_transactions_on_equivalent_systems_yields_equivalent_systems
+    (#m #q #n #r: memory_size)
     (ops1:list storage_operation) (ops2:(list storage_operation){FStar.List.length ops1 = FStar.List.length ops2})
-    (state1 state2 :systemState):
+    (state1:systemState #m #q) (state2 :systemState #n #r)
+    (cp: cache_policy m):
     Lemma (requires (equiv_system state1 state2) /\ (equiv_storage_operations ops1 ops2))
-          (ensures  (equiv_system (complete_memory_transactions ops1 state1) (complete_memory_transactions ops2 state2))) =
+          (ensures  (equiv_system (complete_memory_transactions ops1 state1 cp) (complete_memory_transactions ops2 state2 cp))) =
+    assert(m = n /\ q = r);
     match ops1, ops2 with
      | op1 :: t1, op2 :: t2 -> (
-           let post1 = complete_one_memory_transaction op1 state1 in
-           let post2 = complete_one_memory_transaction op2 state2 in
-           completing_single_memory_transactions_on_equivalent_systems_yields_equivalent_systems op1 op2 state1 state2;
-           completing_equivalent_memory_transactions_on_equivalent_systems_yields_equivalent_systems t1 t2 post1 post2
+           let post1 = complete_one_memory_transaction op1 state1 cp in
+           let post2 = complete_one_memory_transaction op2 state2 cp in
+           completing_single_memory_transactions_on_equivalent_systems_yields_equivalent_systems op1 op2 state1 state2 cp;
+           completing_equivalent_memory_transactions_on_equivalent_systems_yields_equivalent_systems t1 t2 post1 post2 cp
        )
      | [], [] -> ()
 
@@ -519,7 +538,7 @@ let rec mux_list (a:list (maybeBlinded #word)) (b:(list (maybeBlinded #word))) (
     | Nil -> a
     | index_to_change :: tl -> mux_list (mux_list_single a b index_to_change) b tl
 
-let decoding_execution_unit (d:decoder) (s:instruction_semantics d) (inst:word) (pre:systemState): systemState =
+let decoding_execution_unit (#n #r: memory_size) (d:decoder) (s:instruction_semantics #n #r d)  (cp: cache_policy n) (inst:word) (pre:systemState #n #r): systemState #n #r =
     let decoded = d inst in
     let input_operand_values = (get_operands decoded.input_operands pre) in
     let instruction_output = (s decoded input_operand_values) in
@@ -531,14 +550,14 @@ let decoding_execution_unit (d:decoder) (s:instruction_semantics d) (inst:word) 
                                           0uL
                                         ) } in
     let intermediate_with_updated_registers = set_operands decoded.output_operands output_operand_values pre_with_incremented_pc in
-    complete_memory_transactions instruction_output.memory_ops intermediate_with_updated_registers
+    complete_memory_transactions instruction_output.memory_ops intermediate_with_updated_registers cp
 
-irreducible let trigger (d:decoder) (s:instruction_semantics d) (inst:word) (pre:systemState) = False
+irreducible let trigger (#n #r: memory_size) (d:decoder) (s:instruction_semantics #n #r d) (cp:cache_policy n) (inst:word) (pre:systemState #n #r) = False
 
-let decoding_execution_unit_with_redacting_equivalent_instruction_semantics_is_redacting_equivalent_somewhere (d:decoder) (s:(instruction_semantics d){is_redacting_equivalent_instruction_semantics_everywhere d s}) (inst:word) (pre:systemState):
-    Lemma (ensures (equiv_system (decoding_execution_unit d s inst pre)
-                                 (decoding_execution_unit d s inst (redact_system pre))))
-    [SMTPat (trigger d s inst pre)] =
+let decoding_execution_unit_with_redacting_equivalent_instruction_semantics_is_redacting_equivalent_somewhere (#n #r: memory_size) (d:decoder) (s:(instruction_semantics #n #r d){is_redacting_equivalent_instruction_semantics_everywhere d s}) (cp:cache_policy n) (inst:word) (pre:systemState #n #r):
+    Lemma (ensures (equiv_system (decoding_execution_unit d s cp inst pre)
+                                 (decoding_execution_unit d s cp inst (redact_system pre))))
+    [SMTPat (trigger d s cp inst pre)] =
       let decoded = d inst in
       let input_operand_values = (get_operands decoded.input_operands pre) in
       let redacted_input_operand_values = (get_operands decoded.input_operands (redact_system pre)) in
@@ -582,8 +601,8 @@ let decoding_execution_unit_with_redacting_equivalent_instruction_semantics_is_r
 
       assert(equiv_system post1 post_redacted1);
 
-      let post2 = complete_memory_transactions instruction_output.memory_ops post1 in
-      let post_redacted2 = complete_memory_transactions redacted_instruction_output.memory_ops post_redacted1 in
+      let post2: systemState #n #r = complete_memory_transactions instruction_output.memory_ops post1 cp in
+      let post_redacted2: systemState #n #r = complete_memory_transactions redacted_instruction_output.memory_ops post_redacted1 cp in
 
       assert(equiv_storage_operations instruction_output.memory_ops redacted_instruction_output.memory_ops);
       equivalent_storage_operation_lists_have_equal_length instruction_output.memory_ops redacted_instruction_output.memory_ops;
@@ -592,18 +611,19 @@ let decoding_execution_unit_with_redacting_equivalent_instruction_semantics_is_r
         instruction_output.memory_ops
         redacted_instruction_output.memory_ops
         post1
-        post_redacted1;
+        post_redacted1
+        cp;
 
       assert(equiv_system post2 post_redacted2)
 
-let decoding_execution_unit_with_redacting_equivalent_instruction_semantics_is_redacting_equivalent (d:decoder) (s:(instruction_semantics d){is_redacting_equivalent_instruction_semantics_everywhere d s}):
-  Lemma (ensures forall(pre:systemState) (inst:word).
-                 (equiv_system (decoding_execution_unit d s inst pre)
-                               (decoding_execution_unit d s inst (redact_system pre)))
-                 \/ (trigger d s inst pre) )
+let decoding_execution_unit_with_redacting_equivalent_instruction_semantics_is_redacting_equivalent (#n #r: memory_size) (d:decoder) (s:(instruction_semantics #n #r d){is_redacting_equivalent_instruction_semantics_everywhere d s}) (cp:cache_policy n):
+  Lemma (ensures forall(pre:systemState #n #r) (inst:word).
+                 (equiv_system (decoding_execution_unit d s cp inst pre)
+                               (decoding_execution_unit d s cp inst (redact_system pre)))
+                 \/ (trigger d s cp inst pre) )
     = ()
 
-let each_decoding_execution_unit_with_redacting_equivalent_instruction_semantics_is_safe (d:decoder) (s:(instruction_semantics d){is_redacting_equivalent_instruction_semantics_everywhere d s}):
-  Lemma (ensures is_safe (decoding_execution_unit d s))
-  = decoding_execution_unit_with_redacting_equivalent_instruction_semantics_is_redacting_equivalent d s;
-    redacting_equivalent_execution_units_are_safe (decoding_execution_unit d s)
+let each_decoding_execution_unit_with_redacting_equivalent_instruction_semantics_is_safe (#n #r: memory_size) (d:decoder) (s:(instruction_semantics #n #r d){is_redacting_equivalent_instruction_semantics_everywhere d s}) (cp:cache_policy n):
+  Lemma (ensures is_safe (decoding_execution_unit d s cp))
+  = decoding_execution_unit_with_redacting_equivalent_instruction_semantics_is_redacting_equivalent d s cp;
+    redacting_equivalent_execution_units_are_safe (decoding_execution_unit d s cp)
