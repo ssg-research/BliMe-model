@@ -1,3 +1,6 @@
+/// ****************
+/// Blindable values
+/// ****************
 module Value
 
 type maybeBlinded (#t:Type) =
@@ -58,6 +61,8 @@ let equivalent_clear_values_are_equal (t:eqtype) (x y:maybeBlinded #t):
           (ensures x = y)
     = ()
 
+/// .. fst::
+///    :name: equiv_list
 val equiv_list (#t:eqtype)
       (lhs:list (maybeBlinded #t))
       (rhs:list (maybeBlinded #t))

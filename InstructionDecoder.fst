@@ -1,21 +1,43 @@
+/// **************************
+/// Instruction-decoding model
+/// **************************
+
 module InstructionDecoder
 
 open Cpu
 open Memory
 open Value
 
+/// ================
+/// Type definitions
+/// ================
+(*
+ * Instruction operand, representing the target of a read or write by a
+ * normal instruction (not a store or load).
+ *)
 type operand =
   | PC
   | Register: n:nat -> operand
   | Immediate: n:Cpu.word -> operand
 
+(*
+ * Storage operation, representing a load or store from memory.
+ *)
 type storage_operation =
   | Load: address:nat -> dest:nat -> storage_operation
   | Store: address:nat -> src:nat -> storage_operation
 
+(*
+ * A cache policy function, specifying what a given storage operation does
+ * to a system's cache state.
+ *)
 type cache_policy (n:memory_size) =
        (cache_state n) -> storage_operation -> (cache_state n)
 
+
+/// ========================
+/// Register file operations
+/// ========================
 let rec get_operands (#n #r: memory_size) (operands:list operand) (state:systemState #n #r): rv:(list (maybeBlinded #word)){FStar.List.length rv = FStar.List.length operands} =
   match operands with
     | Nil -> Nil
@@ -92,6 +114,10 @@ let rec get_operands_on_equivalent_inputs_has_equivalent_output (#m #q #n #r: me
                     get_operands_on_equivalent_inputs_has_equivalent_output tl state1 state2
                   )
 
+/// ====================
+/// Instruction decoding
+/// ====================
+
 type decodedInstruction = { opcode: nat; input_operands: list operand; output_operands: list operand }
 
 type decoder = (inst:word) -> decodedInstruction
@@ -100,6 +126,10 @@ type instruction_result (di:decodedInstruction) = {
   register_writes: (vals:(list (maybeBlinded #word)){FStar.List.length vals = FStar.List.length di.output_operands});
   memory_ops   :(list storage_operation)
   }
+
+/// =================
+/// Memory operations
+/// =================
 
 let equiv_storage_operation (lhs rhs: storage_operation) =
   match lhs, rhs with
@@ -165,6 +195,9 @@ let rec equivalent_storage_operation_lists_have_equal_length (lhs rhs: list stor
     | hl :: tl, hr :: tr -> equivalent_storage_operation_lists_have_equal_length tl tr
     | _, _ -> ()
 
+/// ===========================
+/// Computation by instructions
+/// ===========================
 
 let equiv_result (#di:decodedInstruction) (lhs rhs:(instruction_result di)) =
     (equiv_list lhs.register_writes rhs.register_writes)
@@ -241,6 +274,9 @@ let redacting_equivalent_instruction_semantics_on_equivalent_inputs_yields_equiv
   result_equivalence_is_transitive result1 redacted_result1 result2;
   assert(equiv_result result1 result2)
 
+/// ===============
+/// List operations
+/// ===============
 
 let rec mux_list_single (a:list(maybeBlinded #word)) (b:list(maybeBlinded #word)) (n:nat):
         list(maybeBlinded #word)
@@ -538,6 +574,10 @@ let rec mux_list (a:list (maybeBlinded #word)) (b:(list (maybeBlinded #word))) (
     | Nil -> a
     | index_to_change :: tl -> mux_list (mux_list_single a b index_to_change) b tl
 
+/// ===============
+/// Execution model
+/// ===============
+
 let decoding_execution_unit (#n #r: memory_size) (d:decoder) (s:instruction_semantics #n #r d)  (cp: cache_policy n) (inst:word) (pre:systemState #n #r): systemState #n #r =
     let decoded = d inst in
     let input_operand_values = (get_operands decoded.input_operands pre) in
@@ -552,8 +592,16 @@ let decoding_execution_unit (#n #r: memory_size) (d:decoder) (s:instruction_sema
     let intermediate_with_updated_registers = set_operands decoded.output_operands output_operand_values pre_with_incremented_pc in
     complete_memory_transactions instruction_output.memory_ops intermediate_with_updated_registers cp
 
+/// ==================
+/// Safety definitions
+/// ==================
+
 irreducible let trigger (#n #r: memory_size) (d:decoder) (s:instruction_semantics #n #r d) (cp:cache_policy n) (inst:word) (pre:systemState #n #r) = False
 
+
+/// ---------------------------
+/// Redacting-equivalent safety
+/// ---------------------------
 let decoding_execution_unit_with_redacting_equivalent_instruction_semantics_is_redacting_equivalent_somewhere (#n #r: memory_size) (d:decoder) (s:(instruction_semantics #n #r d){is_redacting_equivalent_instruction_semantics_everywhere d s}) (cp:cache_policy n) (inst:word) (pre:systemState #n #r):
     Lemma (ensures (equiv_system (decoding_execution_unit d s cp inst pre)
                                  (decoding_execution_unit d s cp inst (redact_system pre))))
@@ -623,6 +671,10 @@ let decoding_execution_unit_with_redacting_equivalent_instruction_semantics_is_r
                  \/ (trigger d s cp inst pre) )
     = ()
 
+
+/// ------------
+/// Main theorem
+/// ------------
 let each_decoding_execution_unit_with_redacting_equivalent_instruction_semantics_is_safe (#n #r: memory_size) (d:decoder) (s:(instruction_semantics #n #r d){is_redacting_equivalent_instruction_semantics_everywhere d s}) (cp:cache_policy n):
   Lemma (ensures is_safe (decoding_execution_unit d s cp))
   = decoding_execution_unit_with_redacting_equivalent_instruction_semantics_is_redacting_equivalent d s cp;
