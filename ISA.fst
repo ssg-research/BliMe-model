@@ -1,6 +1,6 @@
-/// ******************
-/// Model ISA analysis
-/// ******************
+/// *********
+/// Model ISA
+/// *********
 module ISA
 
 open FStar.Math.Lib
@@ -11,21 +11,42 @@ open Memory
 open InstructionDecoder
 open Value
 
+/// ==================
+/// Instruction format
+/// ==================
+///
+/// We start by defining the instruction format.
+///
+/// +-----------+--------+---------+---------+---------+--------+
+/// | **Field** | opcode | out1    | in1     | in2     | imm    |
+/// +-----------+---+----+----+----+----+----+----+----+----+---+
+/// | **Bits**  | 63| 61 | 60 | 56 | 55 | 51 | 50 | 46 | 45 | 0 |
+/// +-----------+---+----+----+----+----+----+----+----+----+---+
+///
+/// Given this format, we then define functions to extract each component of the
+/// instruction word.
+///
+/// First, we define a conversion function mapping a machine word to an integer.
 let v = FStar.UInt64.v
 
-(* Instruction format:
- *
- *   opcode | out1 | in1 | in2 | imm
- *  63    61 60  56 55 51 50 46 45 0
- *)
+/// Then we define functions that extract the various components
 let parse_opcode (inst:word) = (arithmetic_shift_right (v inst) 61) % 8
 let parse_out1 (inst:word): nat = (arithmetic_shift_right (v inst) 56) % 32
 let parse_in1 (inst:word): nat = (arithmetic_shift_right (v inst) 51) % 32
 let parse_in2 (inst:word): nat = (arithmetic_shift_right (v inst) 45) % 32
-let parse_imm (inst:word): Cpu.word = (FStar.UInt64.logand inst (FStar.UInt64.sub (FStar.UInt64.shift_left 1uL 46ul) 1uL))
 
+/// However, for immediate values it is more convenient to define the function
+/// to extract a machine word rather than an integer.
+let parse_imm (inst:word): Cpu.word =
+      (FStar.UInt64.logand inst (FStar.UInt64.sub (FStar.UInt64.shift_left 1uL 46ul) 1uL))
+
+/// ===================
+/// Instruction decoder
+/// ===================
+///
+/// Next we set up the instruction decoder, which converts an instruction word
+/// into an opcode plus a set of operands.
 let sample_decoder (inst:word): decodedInstruction =
-
   let opcode = parse_opcode inst in
   let out1 = parse_out1 inst in
   let in1 = parse_in1 inst in
@@ -33,18 +54,40 @@ let sample_decoder (inst:word): decodedInstruction =
   let imm = parse_imm inst in
   match opcode with
   (* Store *)
-    | 0 -> { opcode; input_operands = [ Register in1; Register in2 ]; output_operands = [] }
+    | 0 -> { opcode;
+            input_operands  = [ Register in1; Register in2 ];
+            output_operands = [] }
   (* Load *)
-    | 1 -> { opcode; input_operands = [ Register in1; Register in2 ]; output_operands = [] }
+    | 1 -> { opcode;
+            input_operands  = [ Register in1; Register in2 ];
+            output_operands = [] }
   (* Branch *)
-    | 2 -> { opcode; input_operands = [PC; Register in1; Register in2]; output_operands = [PC] }
-  (* Arithmetic *)
-    | 3 -> { opcode; input_operands = [ Register in1; Register in2; Immediate imm ]; output_operands = [ Register out1 ] }
-    | 4 -> { opcode; input_operands = [ Register in1; Register in2 ]; output_operands = [ Register out1 ] }
-    | 5 -> { opcode; input_operands = [ Register in1; Register in2 ]; output_operands = [ Register out1 ] }
-    | 6 -> { opcode; input_operands = [ Register in1; Register in2 ]; output_operands = [ Register out1 ] }
-    | 7 -> { opcode; input_operands = [ Register in1; Register in2 ]; output_operands = [ Register out1 ] }
+    | 2 -> { opcode;
+            input_operands  = [PC; Register in1; Register in2];
+            output_operands = [PC] }
+  (* Add *)
+    | 3 -> { opcode;
+            input_operands  = [ Register in1; Register in2; Immediate imm ];
+            output_operands = [ Register out1 ] }
+  (* Subtract *)
+    | 4 -> { opcode;
+            input_operands  = [ Register in1; Register in2 ];
+            output_operands = [ Register out1 ] }
+  (* Multiply *)
+    | 5 -> { opcode;
+            input_operands  = [ Register in1; Register in2 ];
+            output_operands = [ Register out1 ] }
+  (* Bitwise AND *)
+    | 6 -> { opcode;
+            input_operands  = [ Register in1; Register in2 ];
+            output_operands = [ Register out1 ] }
+  (* Bitwise XOR *)
+    | 7 -> { opcode;
+            input_operands  = [ Register in1; Register in2 ];
+            output_operands = [ Register out1 ] }
 
+/// Later on we will need to know how many input operands each instruction has;
+/// the prover can work it out, but needs a hint.
 let sample_decoded_instruction_length (inst:word):
   Lemma (ensures FStar.List.length (sample_decoder inst).input_operands =
                     (match (sample_decoder inst).opcode with
@@ -61,6 +104,64 @@ let sample_decoded_instruction_length (inst:word):
         [SMTPat (sample_decoder inst)]=
   ()
 
+
+/// -----------------
+/// Utility functions
+/// -----------------
+let rec any_value_is_blinded (values: list (maybeBlinded #word)): bool =
+  match values with
+    | Nil              -> false
+    | Blinded(hd) :: _  -> true
+    | Clear(hd)   :: tl -> any_value_is_blinded tl
+
+let rec equivalent_lists_have_identical_any_blindedness (a b: list (maybeBlinded #word)):
+  Lemma (requires (equiv_list a b))
+        (ensures (any_value_is_blinded a) = (any_value_is_blinded b))
+  = match a, b with
+      | hl::tl, hr::tr -> equivalent_lists_have_identical_any_blindedness tl tr
+      | _ -> ()
+
+let rec blind_all_values (values: list (maybeBlinded #word)): r:(list (maybeBlinded #word)){FStar.List.length values = FStar.List.length r} =
+    match values with
+      | Nil              -> Nil
+      | Blinded(hd) :: tl -> Blinded(hd) :: blind_all_values tl
+      | Clear(hd)   :: tl -> Blinded(hd) :: blind_all_values tl
+
+let rec blinding_all_values_blinds_each_value (values: list (maybeBlinded #word)) (n:nat{n < FStar.List.length values}):
+  Lemma (ensures Blinded? (FStar.List.Tot.index (blind_all_values values) n))
+        [SMTPat (Blinded? (FStar.List.Tot.index (blind_all_values values) n))] =
+  match n, values with
+    | 0, _   -> ()
+    | _, Nil -> ()
+    | n, hd :: tl -> blinding_all_values_blinds_each_value tl (n-1)
+
+
+let rec blinding_all_values_is_idempotent (values: list (maybeBlinded #word)):
+  Lemma (ensures (blind_all_values values) = blind_all_values (blind_all_values values)) =
+    match values with
+      | hd :: tl -> blinding_all_values_is_idempotent tl
+      | _ -> ()
+
+let rec blinding_all_values_blinds_all_values (values: list (maybeBlinded #word)):
+  Lemma (ensures all_values_are_blinded _ (blind_all_values values))
+        [SMTPat (blind_all_values values)] =
+  match values with
+    | hd :: tl -> blinding_all_values_blinds_all_values tl
+    | _ -> ()
+
+let rec equivalent_unblinded_lists_are_equal (a b: list (maybeBlinded #word)):
+  Lemma (requires (equiv_list a b) /\ (~(any_value_is_blinded a) \/ ~(any_value_is_blinded b)))
+        (ensures a = b) =
+  match a, b with
+    | h1 :: t1, h2 :: t2 -> equivalent_unblinded_lists_are_equal t1 t2
+    | _ -> ()
+
+
+/// =====================
+/// Instruction semantics
+/// =====================
+///
+/// Now we define the behavior of each instruction.
 
 val sample_semantics (#n:memory_size): instruction_semantics #n #32 sample_decoder
 
@@ -85,7 +186,8 @@ let sample_semantics (di:decoder_output sample_decoder)
           { register_writes = [];
             memory_ops = if Blinded? address
                          then []
-                         else match (FStar.List.Tot.index di.input_operands 0), (FStar.List.Tot.index di.input_operands 1) with
+                         else match (FStar.List.Tot.index di.input_operands 0),
+                                    (FStar.List.Tot.index di.input_operands 1) with
                                | Register d, Register s -> [Load (v (unwrap address)) d]
                                | _ -> []}
     (* Branch *)
@@ -93,28 +195,24 @@ let sample_semantics (di:decoder_output sample_decoder)
             let a = FStar.List.Tot.index pre 1 in
             let b = FStar.List.Tot.index pre 2 in
             let ref: maybeBlinded #word = Clear #word 0uL in
-
-            { register_writes = [if Blinded? a then Clear 0uL else if a = ref then b else pc]; memory_ops = [] } )
+            { register_writes = [if Blinded? a then Clear 0uL else if a = ref then b else pc];
+              memory_ops = [] })
     (* Add *)
     | 3 -> ( assert(FStar.List.length pre = 3);
             let a: maybeBlinded #Cpu.word = FStar.List.Tot.index pre 0 in
             let b: maybeBlinded #Cpu.word = FStar.List.Tot.index pre 1 in
             let result: Cpu.word = (FStar.UInt64.add_mod (unwrap a) (unwrap b)) in
             let result = if any_value_is_blinded pre then Blinded result else Clear result in
-           {
-            register_writes = [result];
-            memory_ops = [];
-          })
+            { register_writes = [result];
+              memory_ops = [] })
     (* Sub *)
     | 4 -> ( assert(FStar.List.length pre = 2);
             let a = FStar.List.Tot.index pre 0 in
             let b = FStar.List.Tot.index pre 1 in
             let result: Cpu.word = (FStar.UInt64.sub_mod (unwrap a) (unwrap b)) in
             let result = if any_value_is_blinded pre then Blinded result else Clear result in
-           {
-            register_writes = [result];
-            memory_ops = [];
-          })
+            { register_writes = [result];
+              memory_ops = [] })
     (* MUL *)
     | 5 -> ( assert(FStar.List.length pre = 2);
             let a = FStar.List.Tot.index pre 0 in
@@ -123,10 +221,8 @@ let sample_semantics (di:decoder_output sample_decoder)
             let result = if any_value_is_blinded pre then
                             Blinded result
                          else Clear result in
-           {
-            register_writes = [result];
-            memory_ops = [];
-          })
+           { register_writes = [result];
+             memory_ops = [] })
     (* AND *)
     | 6 -> ( assert(FStar.List.length pre = 2);
             let a: maybeBlinded #word = FStar.List.Tot.index pre 0 in
@@ -145,7 +241,8 @@ let sample_semantics (di:decoder_output sample_decoder)
             let a = FStar.List.Tot.index pre 0 in
             let b = FStar.List.Tot.index pre 1 in
             let result: Cpu.word = (FStar.UInt64.logxor (unwrap a) (unwrap b)) in
-            let result = if (FStar.List.Tot.index di.input_operands 0) = (FStar.List.Tot.index di.input_operands 1) then
+            let result = if (FStar.List.Tot.index di.input_operands 0)
+                           = (FStar.List.Tot.index di.input_operands 1) then
                             Clear 0uL
                          else if any_value_is_blinded pre then
                             Blinded result
@@ -154,97 +251,110 @@ let sample_semantics (di:decoder_output sample_decoder)
                            memory_ops = [];}
           )
 
-irreducible let trigger (#n: memory_size) (inst:word) (pre:instruction_input #n #32 (sample_decoder inst)) = False
+irreducible let trigger (#n: memory_size)
+  (inst:word) (pre:instruction_input #n #32 (sample_decoder inst)) = False
+
+/// ------
+/// Safety
+/// ------
+///
+/// Now we can start to prove the safety of the instruction semantics, which we
+/// do by proving their redaction-equivalence.
+///
+/// This is complicated slightly by the fact that we need to show that the
+/// redacted inputs are also valid inputs.
+///
+/// We start by using an special redacting function on the instruction inputs
+/// that shows that the result is also an input to said instruction.
 
 #set-options "--z3rlimit 1000"
 let sample_semantics_are_redacting_equivalent_expanded (#n: memory_size)
- (inst:word)
-                                      (pre:instruction_input (sample_decoder inst)):
+   (inst:word)
+   (pre:instruction_input (sample_decoder inst)):
   Lemma (ensures (equiv_result (sample_semantics #n (sample_decoder inst) pre)
                                (sample_semantics #n (sample_decoder inst)
-                                                 (redacted_instruction_inputs_are_instruction_inputs #n #32
-                                                    (sample_decoder inst) pre)))
+                                  (redacted_instruction_inputs_are_instruction_inputs #n #32
+                                     (sample_decoder inst) pre)))
                  \/ trigger #n inst pre) =
   ()
 
+/// Then we do the real proof of redacting-equivalence.
 #set-options "--z3rlimit 10000"
-let sample_semantics_are_redacting_equivalent (#n: memory_size) (inst:word)
-                                      (pre:instruction_input #n #32 (sample_decoder inst)):
-  Lemma (ensures is_redacting_equivalent_instruction_semantics_somewhere #n #32 sample_decoder sample_semantics inst pre
+let sample_semantics_are_redacting_equivalent (#n: memory_size)
+    (inst:word)
+    (pre:instruction_input #n #32 (sample_decoder inst)):
+  Lemma (ensures is_redacting_equivalent_instruction_semantics_somewhere #n #32
+                                                                         sample_decoder
+                                                                         sample_semantics
+                                                                         inst pre
                  \/ trigger inst pre) =
   ()
 
 let sample_semantics_are_redacting_equivalent_everywhere (#n: memory_size):
-  Lemma (ensures is_redacting_equivalent_instruction_semantics_everywhere #n #32 sample_decoder sample_semantics) =
+  Lemma (ensures is_redacting_equivalent_instruction_semantics_everywhere #n #32
+                   sample_decoder sample_semantics) =
   ()
 
+/// Finally, we show that the semantics are safe.
 let sample_semantics_are_safe (#n: memory_size) (cp:cache_policy n):
-  Lemma (ensures is_safe #n #32 (decoding_execution_unit #n #32 sample_decoder (sample_semantics #n) cp)) =
+  Lemma (ensures is_safe #n #32
+                         (decoding_execution_unit #n #32 sample_decoder (sample_semantics #n) cp)) =
     sample_semantics_are_redacting_equivalent_everywhere #n;
-    decoding_execution_unit_with_redacting_equivalent_instruction_semantics_is_redacting_equivalent sample_decoder (sample_semantics #n) cp;
-    each_decoding_execution_unit_with_redacting_equivalent_instruction_semantics_is_safe sample_decoder (sample_semantics #n) cp
 
-let sample_semantics_are_minimal (#n: memory_size) (inst:word) (pre:instruction_input (sample_decoder inst)) (i:nat{i < FStar.List.length (sample_decoder inst).output_operands}):
-  Lemma (requires Blinded? (FStar.List.Tot.index ((sample_semantics #n) (sample_decoder inst) pre).register_writes i))
-        (ensures (let post = (sample_semantics #n (sample_decoder inst) pre).register_writes in
-                  let post_i = FStar.List.Tot.index post i in
-                          exists(y:instruction_input (sample_decoder inst)).
-                              (equiv_list y pre)
-                              /\  ~((FStar.List.Tot.index (sample_semantics #n (sample_decoder inst) y).register_writes i)
-                                   == post_i))) =
-        let di = sample_decoder inst in
-        let post = (sample_semantics #n di pre).register_writes in
-        match di.opcode with
-          | 0 -> ()
-          | 1 -> ()
-          | 2 -> (
-              assert(FStar.List.length post = 1);
-              assert(i = 0);
-              let post_i = FStar.List.Tot.index post i in
-              assert(post_i = FStar.List.Tot.hd post);
-              let pc = FStar.List.Tot.index pre 0 in
-              let a = FStar.List.Tot.index pre 1 in
-              let b = FStar.List.Tot.index pre 2 in
-              assert((post_i = pc) \/ (post_i = b));
-              assert(~(Blinded? pc));
-              assert(Blinded? post_i ==> post_i = b);
-              admit()
-            )
-          | 3 -> admit()
-          | 4 -> admit()
-          | 5 -> admit()
-          | 6 -> admit()
-          | 7 -> admit()
+    decoding_execution_unit_with_re_instruction_semantics_is_redacting_equivalent
+      sample_decoder (sample_semantics #n) cp;
+
+    each_decoding_execution_unit_with_redacting_equivalent_instruction_semantics_is_safe
+      sample_decoder (sample_semantics #n) cp
 
 
-let add_instruction_works_correctly (#n:memory_size) (inst:word)
-                                    (pre:(list (maybeBlinded #word)){
-                                      (exists(s: systemState #n). pre = get_operands #n #32 (sample_decoder inst).input_operands s) /\
-                                      FStar.List.length pre = FStar.List.length (sample_decoder inst).input_operands}):
+/// -----------
+/// Correctness
+/// -----------
+///
+/// Next we prove that the instructions do the right thing.  First, addition:
+
+let add_instruction_works_correctly
+  (#n:memory_size) (inst:word)
+  (pre:(list (maybeBlinded #word)){
+    (exists(s: systemState #n).
+      pre = get_operands #n #32 (sample_decoder inst).input_operands s) /\
+      FStar.List.length pre = FStar.List.length (sample_decoder inst).input_operands}):
+
     Lemma (requires parse_opcode inst = 3)
-          (ensures  unwrap (FStar.List.Tot.hd (sample_semantics #n (sample_decoder inst) pre).register_writes)
-                     = (FStar.UInt64.add_mod (unwrap (FStar.List.Tot.index pre 0)) (unwrap (FStar.List.Tot.index pre 1)))) =
+          (ensures  unwrap (FStar.List.Tot.hd
+                             (sample_semantics #n (sample_decoder inst) pre).register_writes)
+                     = (FStar.UInt64.add_mod (unwrap (FStar.List.Tot.index pre 0))
+                                             (unwrap (FStar.List.Tot.index pre 1)))) =
     ()
 
 
+/// Then exclusive or.  First we need to know that :math:`x \oplus x = 0`, since this means
+/// that the output won't depend on the specific value of :math:`x`.
 let xor_with_self_yields_zero (a:Cpu.word):
   Lemma (ensures (FStar.UInt64.logxor a a) = 0uL) =
     let value: FStar.UInt.uint_t 64 = v a in
     FStar.UInt.logxor_self #64 value;
     assert(FStar.UInt.logxor #64 value value == 0)
 
-let xor_instruction_works_correctly (#n:memory_size) (inst:word)
-                                    (pre:(list (maybeBlinded #word)){
-                                      (exists(s: systemState #n). pre = get_operands #n #32 (sample_decoder inst).input_operands s) /\
-                                      FStar.List.length pre = FStar.List.length (sample_decoder inst).input_operands}):
+/// Then we show that the computed value really is the exclusive OR of the inputs.
+let xor_instruction_works_correctly
+      (#n:memory_size) (inst:word)
+      (pre:(list (maybeBlinded #word)){
+        (exists(s: systemState #n).
+          pre = get_operands #n #32 (sample_decoder inst).input_operands s) /\
+          FStar.List.length pre = FStar.List.length (sample_decoder inst).input_operands}):
     Lemma (requires parse_opcode inst = 7)
-          (ensures  unwrap (FStar.List.Tot.hd (sample_semantics #n (sample_decoder inst) pre).register_writes)
-                     = FStar.UInt64.logxor (unwrap (FStar.List.Tot.index pre 0)) (unwrap (FStar.List.Tot.index pre 1)) ) =
+          (ensures  unwrap (FStar.List.Tot.hd
+                             (sample_semantics #n (sample_decoder inst) pre).register_writes)
+                     = FStar.UInt64.logxor (unwrap (FStar.List.Tot.index pre 0))
+                                           (unwrap (FStar.List.Tot.index pre 1)) ) =
           let di = sample_decoder inst in
           let a = FStar.List.Tot.index pre 0 in
           let b = FStar.List.Tot.index pre 1 in
           let outputs = (sample_semantics #n (sample_decoder inst) pre).register_writes in
-          if (FStar.List.Tot.index di.input_operands 0) = (FStar.List.Tot.index di.input_operands 1) then (
+          if (FStar.List.Tot.index di.input_operands 0)
+              = (FStar.List.Tot.index di.input_operands 1) then (
             assert(a == b);
             xor_with_self_yields_zero (unwrap a) )
           else if any_value_is_blinded pre then

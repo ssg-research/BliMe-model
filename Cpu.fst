@@ -10,8 +10,7 @@ open Value
 /// System state
 /// ============
 
-/// We start by defining the low-level state of the system.  We begin by defining memory
-/// types.
+/// We start by defining the low-level state of the system.
 ///
 /// What does an address look like, and what does a word in memory look like?
 type address = FStar.UInt64.t
@@ -61,7 +60,8 @@ let equiv_system (#m #q #n #r: memory_size) (lhs:systemState #m #q) (rhs:systemS
 
 /// We then prove several properties of :math:`\stackrel{\mathrm{state}}{\equiv}`:
 ///   - **Equality implies equivalence**: :math:`s_1 = s_2 \Rightarrow s_1 \stackrel{\mathrm{state}}{\equiv} s_2`
-let equal_systems_are_equivalent (#n #r:memory_size) (lhs:systemState #n #r) (rhs:systemState #n #r):
+let equal_systems_are_equivalent (#n #r:memory_size)
+                                 (lhs:systemState #n #r) (rhs:systemState #n #r):
   Lemma (requires lhs = rhs) (ensures (equiv_system #n #r #n #r lhs rhs)) =
   equal_lists_are_equivalent _ lhs.registers rhs.registers;
   equal_lists_are_equivalent _ lhs.memory rhs.memory
@@ -155,7 +155,7 @@ let equivalent_systems_have_equal_redactions (#m #q #n #r: memory_size)
 /// .. math ::
 ///
 ///    \forall s_1, s_2: s_1 \stackrel{\mathrm{state}}{\equiv} s_2 \Rightarrow  f(s_1) \stackrel{\mathrm{state}}{\equiv} f(\mathrm{redact}\; s_1) = f(\mathrm{redact}\; s_2) \stackrel{\mathrm{state}}{\equiv} f(s_2) .
-/// 
+///
 
 
 /// ===============
@@ -165,15 +165,18 @@ let equivalent_systems_have_equal_redactions (#m #q #n #r: memory_size)
 /// The next step is to describe how the system actually executes.
 ///
 /// We represent this using:
-///   - an execution unit (essentially, an ISA)
 ///
-///     .. fst ::
+/// .. _execution_unit:
+///
+/// - an execution unit (essentially, an ISA)
+///
+///   .. fst ::
 type execution_unit (#n #r:memory_size) = word -> systemState #n #r -> systemState #n #r
 
-///   - a function that "steps" the processor state, which in this case
-///     means to load an instruction from memory and execute it in a
-///     single cycle.
-
+/// - a function that "steps" the processor state, which in this case
+///   means to load an instruction from memory and execute it in a
+///   single cycle.
+///
 val step (#n #r:memory_size)
     (exec:execution_unit #n #r)
     (pre_state: systemState #n #r)
@@ -217,16 +220,32 @@ type safe_execution_unit (#n #r:memory_size) = exec:(execution_unit #n #r){is_sa
 /// ----------------------
 /// Redaction-based safety
 /// ----------------------
-/// We can show that a system constructed from an execution unit that produces
-/// an equivalent output when operating on the same input but with the blinded
-/// values zeroed is safe.
+///
+/// As an alternative to the notion of safety defined above, we define another
+/// notion of safety in terms of redaction equivalence of the execution unit
+/// only.
+///
+/// We say that an execution unit :math:`X(i, s)`, that maps an instruction and
+/// a state to a new state, is redacting-equivalent if its action on a redacted state yields an equivalent result to its action on the original state:
+///
+/// .. math ::
+///
+///    \forall i: X(i, s) \stackrel{\mathrm{state}}{\equiv} X(i, \mathrm{redact}\; s),
+/// 
+/// as expressed below:
 
  let is_redacting_equivalent_execution_unit (#n #r:memory_size) (exec:execution_unit #n #r)
-   = forall(pre:systemState) (inst:word).  (equiv_system (exec inst pre) (exec inst (redact_system pre)))
+   = forall(pre:systemState) (inst:word).
+        (equiv_system (exec inst pre) (exec inst (redact_system pre)))
 
 type redacting_equivalent_execution_unit (#n #r:memory_size)
    = exec:(execution_unit #n #r){is_redacting_equivalent_execution_unit exec}
 
+
+/// Then we show that a redacting-equivalent execution unit yields a
+/// redacting-equivalent system; that is to say, that it is redacting-equivalent
+/// even if the instruction is loaded from memory rather than being specified
+/// identically for the original and redacted system states.
 let is_redacting_equivalent_system_single_step_somewhere (#n #r:memory_size)
                                                          (exec:execution_unit #n #r)
                                                          (pre:systemState #n #r) =
@@ -237,20 +256,37 @@ let is_redacting_equivalent_system_single_step_everywhere (#n #r:memory_size)
     forall (pre:systemState). is_redacting_equivalent_system_single_step_somewhere exec pre
 
 let redacting_equivalent_execution_units_lead_to_redacting_equivalent_systems_somewhere
-                                                          (#n #r:memory_size)
-                                                          (exec:redacting_equivalent_execution_unit #n #r)
-                                                          (pre:systemState #n #r):
+                                                      (#n #r:memory_size)
+                                                      (exec:redacting_equivalent_execution_unit #n #r)
+                                                      (pre:systemState #n #r):
     Lemma (ensures is_redacting_equivalent_system_single_step_somewhere exec pre) =
+      // We showed already that the execution unit itself is
+      // redacting-equivalent for any given instruction.  But this time we
+      // load the instruction from memory, so we need to show that redaction
+      // doesn't affect which instruction is executed.
+
+      // First, we check that the instruction will be loaded from the same
+      // address despite the redaction.  This comes easily, since any state
+      // is equivalent to its redaction, and equivalent states have equal PCs.
       let redaction = redact_system pre in
       systems_are_equivalent_to_their_redaction pre;
       assert(pre.pc = redaction.pc);
+
+      // Since the PCs are equal and memories are equivalent, the instructions
+      // read from memory are equivalent.  Since the processor will fault if
+      // we try to execute a blinded instruction, equivalence is enough for the
+      // execution results to be equivalent.
       let pc = pre.pc in
       equivalent_memories_have_equivalent_values pre.memory redaction.memory pc;
       assert(equiv_list pre.memory redaction.memory);
       assert(equiv (Memory.nth pre.memory pc) (Memory.nth redaction.memory pc))
 
+/// Next, we show that a redacting-equivalent execution unit leads to a
+/// redacting-equivalent overall system.
+
 let redacting_equivalent_systems_give_equivalent_outputs_for_equivalent_inputs (#n #r:memory_size)
-    (exec:redacting_equivalent_execution_unit #n #r) (pre_1:systemState #n #r) (pre_2:systemState #n #r)
+    (exec:redacting_equivalent_execution_unit #n #r)
+    (pre_1:systemState #n #r) (pre_2:systemState #n #r)
       : Lemma (requires equiv_system pre_1 pre_2)
               (ensures equiv_system (step exec pre_1) (step exec pre_2))
               [SMTPat (equiv_system (step exec pre_1) (step exec pre_2))]
@@ -264,9 +300,10 @@ let redacting_equivalent_systems_give_equivalent_outputs_for_equivalent_inputs (
                                          (step exec (redact_system pre_1))
                                          (step exec pre_2)
 
-/// ------------
-/// Main theorem
-/// ------------
+/// Finally, we show that a redacting-equivalent execution unit leads to a
+/// processor that is safe (in the sense that equivalent states remain
+/// equivalent after each execution step).
+
 let redacting_equivalent_execution_units_are_safe (#n #r:memory_size)
     (exec:redacting_equivalent_execution_unit #n #r):
     Lemma (ensures is_safe exec)
