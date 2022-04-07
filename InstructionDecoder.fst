@@ -1,6 +1,10 @@
-/// **************************
-/// Instruction-decoding model
-/// **************************
+/// ****************
+/// Load-store model
+/// ****************
+///
+/// This CPU model includes more detail, with each instruction having register
+/// operands, and producing a set of memory operations to be carried out by a
+/// load-store unit.
 
 module InstructionDecoder
 
@@ -680,6 +684,8 @@ let redacting_equivalent_instruction_semantics_on_equivalent_inputs_yields_equiv
   assert(equiv_result result1 result2)
 
 
+/// .. _loadstore_execution_model:
+///
 /// ===============
 /// Execution model
 /// ===============
@@ -693,7 +699,7 @@ let redacting_equivalent_instruction_semantics_on_equivalent_inputs_yields_equiv
 /// #. increments the program counter, and
 /// #. writes the result to the system's register file.
 ///
-let decoding_execution_unit (#n #r: memory_size)
+let loadstore_execution_unit (#n #r: memory_size)
     (d:decoder) (s:instruction_semantics #n #r d) (cp: cache_policy n)
     (inst:word) (pre:systemState #n #r): systemState #n #r =
     let decoded = d inst in
@@ -726,15 +732,15 @@ irreducible let trigger (#n #r: memory_size)
 /// Now we are at the point that we can start to prove security properties of this execution unit, when applied to instruction semantics that are also redacting-equivalent.
 ///
 /// First, that it is redacting equivalent for specific instructions and system states.
-let decoding_execution_unit_with_re_instruction_semantics_is_redacting_equivalent_somewhere
+let loadstore_execution_unit_with_re_instruction_semantics_is_redacting_equivalent_somewhere
       (#n #r: memory_size)
       (d:decoder)
       (s:(instruction_semantics #n #r d){is_redacting_equivalent_instruction_semantics_everywhere d s})
       (cp:cache_policy n)
       (inst:word)
       (pre:systemState #n #r):
-    Lemma (ensures (equiv_system (decoding_execution_unit d s cp inst pre)
-                                 (decoding_execution_unit d s cp inst (redact_system pre))))
+    Lemma (ensures (equiv_system (loadstore_execution_unit d s cp inst pre)
+                                 (loadstore_execution_unit d s cp inst (redact_system pre))))
     [SMTPat (trigger d s cp inst pre)] =
       let decoded = d inst in
       let input_operand_values = (get_operands decoded.input_operands pre) in
@@ -814,14 +820,14 @@ let decoding_execution_unit_with_re_instruction_semantics_is_redacting_equivalen
       assert(equiv_system post2 post_redacted2)
 
 /// Next, that it is redacting equivalent for all instructions and system states.
-let decoding_execution_unit_with_re_instruction_semantics_is_redacting_equivalent
+let loadstore_execution_unit_with_re_instruction_semantics_is_redacting_equivalent
     (#n #r: memory_size)
     (d:decoder)
     (s:(instruction_semantics #n #r d){is_redacting_equivalent_instruction_semantics_everywhere d s})
     (cp:cache_policy n):
   Lemma (ensures forall(pre:systemState #n #r) (inst:word).
-                 (equiv_system (decoding_execution_unit d s cp inst pre)
-                               (decoding_execution_unit d s cp inst (redact_system pre)))
+                 (equiv_system (loadstore_execution_unit d s cp inst pre)
+                               (loadstore_execution_unit d s cp inst (redact_system pre)))
                  \/ (trigger d s cp inst pre) )
     = ()
 
@@ -830,11 +836,11 @@ let decoding_execution_unit_with_re_instruction_semantics_is_redacting_equivalen
 /// -------------------
 
 /// Finally, we show that the decoding execution unit is safe.
-let each_decoding_execution_unit_with_redacting_equivalent_instruction_semantics_is_safe
+let each_loadstore_execution_unit_with_redacting_equivalent_instruction_semantics_is_safe
       (#n #r: memory_size)
       (d:decoder)
       (s:(instruction_semantics #n #r d){is_redacting_equivalent_instruction_semantics_everywhere d s})
       (cp:cache_policy n):
-  Lemma (ensures is_safe (decoding_execution_unit d s cp))
-  = decoding_execution_unit_with_re_instruction_semantics_is_redacting_equivalent d s cp;
-    redacting_equivalent_execution_units_are_safe (decoding_execution_unit d s cp)
+  Lemma (ensures is_safe (loadstore_execution_unit d s cp))
+  = loadstore_execution_unit_with_re_instruction_semantics_is_redacting_equivalent d s cp;
+    redacting_equivalent_execution_units_are_safe (loadstore_execution_unit d s cp)

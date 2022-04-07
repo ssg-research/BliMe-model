@@ -1,6 +1,10 @@
 /// *******************
 /// Low-level CPU model
 /// *******************
+///
+/// This file provides a generic model of a CPU and memory, with each
+/// instruction producing an arbitrary transition between system states.
+
 module Cpu
 
 open Memory
@@ -158,6 +162,8 @@ let equivalent_systems_have_equal_redactions (#m #q #n #r: memory_size)
 ///
 
 
+/// .. _execution_model:
+///
 /// ===============
 /// Execution model
 /// ===============
@@ -213,7 +219,8 @@ let equivalent_inputs_yield_equivalent_states (#n #r:memory_size)
 /// Then, we define safety by whether execution preserves state equivalence for
 /// *all* possible inputs.
 let is_safe (#n #r:memory_size) (exec:execution_unit #n #r) =
-    forall (pre1 pre2 : systemState). (equiv_system pre1 pre2) ==> equivalent_inputs_yield_equivalent_states exec pre1 pre2
+    forall (pre1 pre2 : systemState).
+        (equiv_system pre1 pre2) ==> equivalent_inputs_yield_equivalent_states exec pre1 pre2
 
 type safe_execution_unit (#n #r:memory_size) = exec:(execution_unit #n #r){is_safe exec}
 
@@ -231,7 +238,7 @@ type safe_execution_unit (#n #r:memory_size) = exec:(execution_unit #n #r){is_sa
 /// .. math ::
 ///
 ///    \forall i: X(i, s) \stackrel{\mathrm{state}}{\equiv} X(i, \mathrm{redact}\; s),
-/// 
+///
 /// as expressed below:
 
  let is_redacting_equivalent_execution_unit (#n #r:memory_size) (exec:execution_unit #n #r)

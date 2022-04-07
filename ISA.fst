@@ -1,6 +1,9 @@
 /// *********
 /// Model ISA
 /// *********
+///
+/// In this file, we analyze a concrete instruction set that includes a number
+/// of manually-implemented taint propagation rules.
 module ISA
 
 open FStar.Math.Lib
@@ -162,6 +165,17 @@ let rec equivalent_unblinded_lists_are_equal (a b: list (maybeBlinded #word)):
 /// =====================
 ///
 /// Now we define the behavior of each instruction.
+///
+/// In most cases we use a 'generic' taint propagation rule:
+///
+/// .. example ::
+///
+///      if any_value_is_blinded pre then Blinded result else Clear result
+///
+/// However, there are some instructions where a more specific rule is
+/// appropriate.  For example, :math:`x \oplus x` and :math:`x \& 0` both
+/// evaluate to zero, irrespective of the value of :math:`x`, meaning that
+/// the result can be ``Clear 0`` even though an input may be blinded.
 
 val sample_semantics (#n:memory_size): instruction_semantics #n #32 sample_decoder
 
