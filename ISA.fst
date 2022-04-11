@@ -312,13 +312,13 @@ let sample_semantics_are_redacting_equivalent_everywhere (#n: memory_size):
 /// Finally, we show that the semantics are safe.
 let sample_semantics_are_safe (#n: memory_size) (cp:cache_policy n):
   Lemma (ensures is_safe #n #32
-                         (decoding_execution_unit #n #32 sample_decoder (sample_semantics #n) cp)) =
+                         (loadstore_execution_unit #n #32 sample_decoder (sample_semantics #n) cp)) =
     sample_semantics_are_redacting_equivalent_everywhere #n;
 
-    decoding_execution_unit_with_re_instruction_semantics_is_redacting_equivalent
+    loadstore_execution_unit_with_re_instruction_semantics_is_redacting_equivalent
       sample_decoder (sample_semantics #n) cp;
 
-    each_decoding_execution_unit_with_redacting_equivalent_instruction_semantics_is_safe
+    each_loadstore_execution_unit_with_redacting_equivalent_instruction_semantics_is_safe
       sample_decoder (sample_semantics #n) cp
 
 
