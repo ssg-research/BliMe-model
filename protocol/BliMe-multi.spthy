@@ -1,0 +1,112 @@
+theory BliMe
+begin
+
+builtins: symmetric-encryption
+
+functions: computation/2
+
+rule Setup:
+  [ Fr(~ks) ]
+  -->
+  [ !SealingKey(~ks) ]
+
+rule KeyExchange:
+  [ Fr(~id), Fr(~kq), Fr(~kr), !SealingKey(ks) ]
+  --[KeyExchangeMade(~id)]->
+  [ !ClientKey(~id, ~kq, ~kr), Out(senc(<'S', ~id, ~kq, ~kr>, ks)) ]
+
+rule Query:
+  let c = senc(<'Q', ~m>, kq)
+  in
+  [ !ClientKey(id, kq, kr), Fr(~m) ]
+  --[ QueryMadeByClient(id, ~m), QuerySent(c, ~m) ]->
+  [ Out(c) ]
+
+rule SetCapability:
+  [ !ClientKey(id, kq, kr), !SealingKey(ks), In(senc(<'S', id, kq, kr>, ks)) ]
+  --[EncryptionEngineConfigured(id)]->
+  [ EncryptionEngineState(id, kq, kr) ]
+
+rule Import:
+  let c = senc(<'Q', plaintext>, kq)
+  in
+  [ EncryptionEngineState(id, kq, kr), In(c) ]
+  --[Imported(c, plaintext)]->
+  [ !BlindedData(id, plaintext), Out(id) ]
+
+rule Compute:
+ [ !BlindedData(id, data1), In(code) ]
+ --[Computation(id)]->
+ [ !BlindedData(id, computation(data1, code)) ]
+
+rule BlindData:
+ [ In(<id, data>) ]
+ -->
+ [ !BlindedData(id, data) ]
+
+rule Export:
+  [ EncryptionEngineState(id, kq, kr), !BlindedData(id, data) ]
+  --[Exported(id, data)]->
+  [ Out(<senc(<'R',data>,kr)>) ]
+
+rule Response:
+  [ In(<senc(<'R',data>, kr)>), !ClientKey(id, kq, kr) ]
+  --[ReceivedResponse(id, data)]->
+  []
+
+rule LeakSealingKey:
+  [ !SealingKey(ks) ]
+  --[SealingKeyLeaked()]->
+  [Out(ks)]
+
+rule LeakClientKeys:
+  [ !ClientKey(id, kq, kr) ]
+  --[ClientKeysLeaked(id)]->
+  [Out(<kq, kr>)]
+
+lemma ciphertexts [sources]:
+      " (All ciphertext plaintext #i.
+             Imported(ciphertext,plaintext) @ #i
+             ==> (
+                 (Ex #j. KU(plaintext) @ #j & j < i) |
+                 (Ex #j. QuerySent(ciphertext,plaintext) @ #j & j < i)
+             )
+        )
+      "
+
+lemma execution:
+  exists-trace
+  "
+     Ex id m #i #j. QueryMadeByClient(id, m) @ #i &
+                    not(Ex #r. SealingKeyLeaked() @ #r) &
+                    not(Ex #r. ClientKeysLeaked(id) @ #r) &
+                    ReceivedResponse(id, m) @ #j
+  "
+
+lemma Expected_attack:
+  exists-trace
+  "
+     Ex id id2 m #i #k. QueryMadeByClient(id, m)  @ #i &
+                       not(Ex #r. ClientKeysLeaked(id) @ #r) &
+                       ReceivedResponse(id2, m) @ #k
+  "
+
+lemma secrecy:
+  "not (
+     Ex id m #i #j.
+                        QueryMadeByClient(id, m) @ #i &
+                        K(m) @ #j &
+                        not(Ex #r. SealingKeyLeaked() @ #r) &
+                        not(Ex #r. ClientKeysLeaked(id) @ #r) //&
+   )"
+
+
+lemma Output_secrecy:
+  "not (
+     Ex id m #i #j.  QueryMadeByClient(id, m) @ #i &
+                     K(m) @ #j &
+                     not(Ex #r. SealingKeyLeaked() @ #r) &
+                     not(Ex #r. ClientKeysLeaked(id) @ #r)
+   )"
+
+end
