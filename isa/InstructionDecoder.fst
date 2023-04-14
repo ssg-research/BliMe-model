@@ -789,6 +789,8 @@ let loadstore_execution_unit_with_re_instruction_semantics_is_redacting_equivale
 
       assert(equiv_list input_operand_values (get_operands decoded.input_operands (redact_system pre)));
 
+      list_equivalence_is_symmetric blindedWord input_operand_values redacted_input_operand_values;
+      assert(equiv_list redacted_input_operand_values input_operand_values);
       list_equivalence_is_transitive blindedWord redacted_input_operand_values
         input_operand_values
         (get_operands decoded.input_operands (redact_system pre));

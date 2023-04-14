@@ -17,6 +17,7 @@ class blinded_data_representation (outer:eqtype) = {
   properties: squash (
     (forall (x y: outer). x = y ==> equiv x y) /\
     (forall (x y: outer). equiv x y <==> equiv y x) /\
+    (forall (x y: outer). equiv x y ==> is_blinded x = is_blinded y) /\
     (forall (x y z: outer). equiv x y /\ equiv y z ==> equiv x z) /\
     (forall (x: outer) (d: inner). equiv x (redact x d)) /\
     (forall (x y: outer) (d: inner). equiv x y <==> redact x d = redact y d)
@@ -116,7 +117,6 @@ let equivalent_values_have_equal_redactions (t:eqtype) (x y:maybeBlinded #t) (d:
     Lemma (ensures equiv1 x y <==> redact1 x d = redact1 y d)
     = ()
 
-
 instance single_bit_blinding (#t:eqtype) : blinded_data_representation (maybeBlinded #t) = {
   inner = t;
   equiv = equiv1;
@@ -170,7 +170,7 @@ let rec equal_lists_are_equivalent t {| blinded_data_representation t |} (lhs rh
 let rec list_equivalence_is_symmetric t {| blinded_data_representation t |} (lhs rhs: list t):
     Lemma (requires equiv_list #t lhs rhs)
           (ensures  equiv_list #t rhs lhs)
-          [SMTPat (equiv_list #t lhs rhs)]
+//          [SMTPat (equiv_list #t lhs rhs)]
     = match lhs, rhs  with
       | hl :: tl, hr :: tr -> list_equivalence_is_symmetric t tl tr
       | _ -> ()
@@ -230,7 +230,9 @@ let rec equivalent_lists_have_identical_any_blindedness #t {| blinded_data_repre
   Lemma (requires (equiv_list a b))
         (ensures (any_value_is_blinded a) = (any_value_is_blinded b))
   = match a, b with
-      | hl::tl, hr::tr -> equivalent_lists_have_identical_any_blindedness tl tr
+      | hl::tl, hr::tr -> (assert(equiv hl hr);
+                          assert((is_blinded hl) == (is_blinded hr));
+                          equivalent_lists_have_identical_any_blindedness tl tr)
       | _ -> ()
 
 

@@ -105,8 +105,16 @@ let sample_decoded_instruction_length (inst:word):
                      | 7 -> 2
                      )
         )
-        [SMTPat (sample_decoder inst)]=
-  ()
+        [SMTPat (sample_decoder inst)] =
+    match (sample_decoder inst).opcode with
+        | 0 -> ()
+        | 1 -> ()
+        | 2 -> ()
+        | 3 -> ()
+        | 4 -> ()
+        | 5 -> ()
+        | 6 -> ()
+        | 7 -> ()
 
 
 /// -----------------
