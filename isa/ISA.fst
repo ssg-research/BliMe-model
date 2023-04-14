@@ -13,6 +13,7 @@ open Cpu
 open Memory
 open InstructionDecoder
 open Value
+open Multi
 
 /// ==================
 /// Instruction format
@@ -111,48 +112,61 @@ let sample_decoded_instruction_length (inst:word):
 /// -----------------
 /// Utility functions
 /// -----------------
-let rec any_value_is_blinded (values: list (maybeBlinded #word)): bool =
-  match values with
-    | Nil              -> false
-    | Blinded(hd) :: _  -> true
-    | Clear(hd)   :: tl -> any_value_is_blinded tl
+// let rec any_value_is_blinded (values: list blindedWord): bool =
+//   match values with
+//    | Nil              -> false
+//    | Blinded(hd) :: _  -> true
+//    | Clear(hd)   :: tl -> any_value_is_blinded tl
 
-let rec equivalent_lists_have_identical_any_blindedness (a b: list (maybeBlinded #word)):
-  Lemma (requires (equiv_list a b))
-        (ensures (any_value_is_blinded a) = (any_value_is_blinded b))
-  = match a, b with
-      | hl::tl, hr::tr -> equivalent_lists_have_identical_any_blindedness tl tr
-      | _ -> ()
+type blindedness_state =
+  | NoneBlinded : blindedness_state
+  | ConsistentlyBlinded : int -> blindedness_state
+  | InconsistentlyBlinded : blindedness_state
 
-let rec blind_all_values (values: list (maybeBlinded #word)): r:(list (maybeBlinded #word)){FStar.List.length values = FStar.List.length r} =
+let rec blindedness_state_of_list_int (l : list blindedWord) (s : blindedness_state) : blindedness_state =
+  if InconsistentlyBlinded? s then s else
+  match l with
+    | Nil -> s
+    | MultiClear x :: tl -> blindedness_state_of_list_int tl s
+    | MultiBlinded x d :: tl -> let s2 = match s with
+                                          | NoneBlinded -> ConsistentlyBlinded d
+                                          | ConsistentlyBlinded d2 -> if d = d2 then s else InconsistentlyBlinded
+                                          | InconsistentlyBlinded -> InconsistentlyBlinded
+                                  in
+                                blindedness_state_of_list_int tl s2
+
+let blindedness_state_of_list (l : list blindedWord) : blindedness_state =
+  blindedness_state_of_list_int l NoneBlinded
+
+let rec blind_all_values (values: list blindedWord) (d: int): r:(list blindedWord){FStar.List.length values = FStar.List.length r} =
     match values with
-      | Nil              -> Nil
-      | Blinded(hd) :: tl -> Blinded(hd) :: blind_all_values tl
-      | Clear(hd)   :: tl -> Blinded(hd) :: blind_all_values tl
+      | Nil                     -> Nil
+      | MultiBlinded hd dx :: tl -> MultiBlinded hd dx :: blind_all_values tl d
+      | MultiClear   hd    :: tl -> MultiBlinded hd d :: blind_all_values tl d
 
-let rec blinding_all_values_blinds_each_value (values: list (maybeBlinded #word)) (n:nat{n < FStar.List.length values}):
-  Lemma (ensures Blinded? (FStar.List.Tot.index (blind_all_values values) n))
-        [SMTPat (Blinded? (FStar.List.Tot.index (blind_all_values values) n))] =
+let rec blinding_all_values_blinds_each_value (values: list blindedWord) (d: int) (n:nat{n < FStar.List.length values}):
+  Lemma (ensures is_blinded (FStar.List.Tot.index (blind_all_values values d) n))
+        [SMTPat (is_blinded (FStar.List.Tot.index (blind_all_values values d) n))] =
   match n, values with
     | 0, _   -> ()
     | _, Nil -> ()
-    | n, hd :: tl -> blinding_all_values_blinds_each_value tl (n-1)
+    | n, hd :: tl -> blinding_all_values_blinds_each_value tl d (n-1)
 
 
-let rec blinding_all_values_is_idempotent (values: list (maybeBlinded #word)):
-  Lemma (ensures (blind_all_values values) = blind_all_values (blind_all_values values)) =
+let rec blinding_all_values_is_idempotent  (values: list blindedWord) (d:int):
+  Lemma (ensures (blind_all_values values d) = blind_all_values (blind_all_values values d) d) =
     match values with
-      | hd :: tl -> blinding_all_values_is_idempotent tl
+      | hd :: tl -> blinding_all_values_is_idempotent tl d
       | _ -> ()
 
-let rec blinding_all_values_blinds_all_values (values: list (maybeBlinded #word)):
-  Lemma (ensures all_values_are_blinded _ (blind_all_values values))
-        [SMTPat (blind_all_values values)] =
+let rec blinding_all_values_blinds_all_values  (values: list blindedWord) (d:int):
+  Lemma (ensures all_values_are_blinded (blind_all_values values d))
+        [SMTPat (blind_all_values values d)] =
   match values with
-    | hd :: tl -> blinding_all_values_blinds_all_values tl
+    | hd :: tl -> blinding_all_values_blinds_all_values tl d
     | _ -> ()
 
-let rec equivalent_unblinded_lists_are_equal (a b: list (maybeBlinded #word)):
+let rec equivalent_unblinded_lists_are_equal (a b: list blindedWord):
   Lemma (requires (equiv_list a b) /\ (~(any_value_is_blinded a) \/ ~(any_value_is_blinded b)))
         (ensures a = b) =
   match a, b with
@@ -181,7 +195,7 @@ val sample_semantics (#n:memory_size): instruction_semantics #n #32 sample_decod
 
 #set-options "--z3rlimit 1000"
 let sample_semantics (di:decoder_output sample_decoder)
-                     (pre:(list (maybeBlinded #word)){
+                     (pre:(list blindedWord){
                        (exists(s: systemState). pre = get_operands di.input_operands s) /\
                        FStar.List.length pre = FStar.List.length di.input_operands})
                      : instruction_result di =
@@ -189,7 +203,7 @@ let sample_semantics (di:decoder_output sample_decoder)
     (* Store *)
     | 0 -> let address = (FStar.List.Tot.index pre 0) in
 
-    { register_writes = []; memory_ops = if Blinded? address then [] else (
+    { register_writes = []; memory_ops = if is_blinded address then [] else (
       assert(FStar.List.length di.input_operands = 2);
       match (FStar.List.Tot.index di.input_operands 0), (FStar.List.Tot.index di.input_operands 1) with
         | Register d, Register s -> [Store (v (unwrap address)) s]
@@ -198,7 +212,7 @@ let sample_semantics (di:decoder_output sample_decoder)
     (* Load *)
     | 1 -> let address = (FStar.List.Tot.index pre 0) in
           { register_writes = [];
-            memory_ops = if Blinded? address
+            memory_ops = if is_blinded address
                          then []
                          else match (FStar.List.Tot.index di.input_operands 0),
                                     (FStar.List.Tot.index di.input_operands 1) with
@@ -208,15 +222,18 @@ let sample_semantics (di:decoder_output sample_decoder)
     | 2 -> ( let pc = FStar.List.Tot.index pre 0 in
             let a = FStar.List.Tot.index pre 1 in
             let b = FStar.List.Tot.index pre 2 in
-            let ref: maybeBlinded #word = Clear #word 0uL in
-            { register_writes = [if Blinded? a then Clear 0uL else if a = ref then b else pc];
+            let ref: blindedWord = MultiClear #word 0uL in
+            { register_writes = [if is_blinded a then make_clear 0uL else if a = ref then b else pc];
               memory_ops = [] })
     (* Add *)
     | 3 -> ( assert(FStar.List.length pre = 3);
-            let a: maybeBlinded #Cpu.word = FStar.List.Tot.index pre 0 in
-            let b: maybeBlinded #Cpu.word = FStar.List.Tot.index pre 1 in
+            let a = FStar.List.Tot.index pre 0 in
+            let b = FStar.List.Tot.index pre 1 in
             let result: Cpu.word = (FStar.UInt64.add_mod (unwrap a) (unwrap b)) in
-            let result = if any_value_is_blinded pre then Blinded result else Clear result in
+            let result = match blindedness_state_of_list pre with
+                          | NoneBlinded -> make_clear result
+                          | ConsistentlyBlinded d -> MultiBlinded result d
+                          | InconsistentlyBlinded -> make_clear 0uL in
             { register_writes = [result];
               memory_ops = [] })
     (* Sub *)
@@ -224,7 +241,10 @@ let sample_semantics (di:decoder_output sample_decoder)
             let a = FStar.List.Tot.index pre 0 in
             let b = FStar.List.Tot.index pre 1 in
             let result: Cpu.word = (FStar.UInt64.sub_mod (unwrap a) (unwrap b)) in
-            let result = if any_value_is_blinded pre then Blinded result else Clear result in
+            let result = match blindedness_state_of_list pre with
+                          | NoneBlinded -> make_clear result
+                          | ConsistentlyBlinded d -> MultiBlinded result d
+                          | InconsistentlyBlinded -> make_clear 0uL in
             { register_writes = [result];
               memory_ops = [] })
     (* MUL *)
@@ -232,21 +252,23 @@ let sample_semantics (di:decoder_output sample_decoder)
             let a = FStar.List.Tot.index pre 0 in
             let b = FStar.List.Tot.index pre 1 in
             let result = (FStar.UInt64.mul_mod (unwrap a) (unwrap b)) in
-            let result = if any_value_is_blinded pre then
-                            Blinded result
-                         else Clear result in
+            let result = match blindedness_state_of_list pre with
+                          | NoneBlinded -> make_clear result
+                          | ConsistentlyBlinded d -> MultiBlinded result d
+                          | InconsistentlyBlinded -> make_clear 0uL in
            { register_writes = [result];
              memory_ops = [] })
     (* AND *)
     | 6 -> ( assert(FStar.List.length pre = 2);
-            let a: maybeBlinded #word = FStar.List.Tot.index pre 0 in
-            let b: maybeBlinded #word = FStar.List.Tot.index pre 1 in
+            let a = FStar.List.Tot.index pre 0 in
+            let b = FStar.List.Tot.index pre 1 in
             let result: Cpu.word = FStar.UInt64.logand (unwrap a) (unwrap b) in
-            let result = if (a = Clear #word 0uL) || (b = Clear #word 0uL) then
-                            Clear 0uL
-                         else if any_value_is_blinded pre then
-                            Blinded result
-                         else Clear result in
+            let result = if (a = make_clear 0uL) || (b = make_clear 0uL) then
+                            make_clear 0uL
+                         else match blindedness_state_of_list pre with
+                          | NoneBlinded -> make_clear result
+                          | ConsistentlyBlinded d -> MultiBlinded result d
+                          | InconsistentlyBlinded -> make_clear 0uL in
                          { register_writes = [result];
                            memory_ops = [];}
           )
@@ -257,10 +279,11 @@ let sample_semantics (di:decoder_output sample_decoder)
             let result: Cpu.word = (FStar.UInt64.logxor (unwrap a) (unwrap b)) in
             let result = if (FStar.List.Tot.index di.input_operands 0)
                            = (FStar.List.Tot.index di.input_operands 1) then
-                            Clear 0uL
-                         else if any_value_is_blinded pre then
-                            Blinded result
-                         else Clear result in
+                            make_clear 0uL
+                         else match blindedness_state_of_list pre with
+                          | NoneBlinded -> make_clear result
+                          | ConsistentlyBlinded d -> MultiBlinded result d
+                          | InconsistentlyBlinded -> make_clear 0uL in
                          { register_writes = [result];
                            memory_ops = [];}
           )
@@ -330,12 +353,12 @@ let sample_semantics_are_safe (#n: memory_size) (cp:cache_policy n):
 
 let add_instruction_works_correctly
   (#n:memory_size) (inst:word)
-  (pre:(list (maybeBlinded #word)){
+  (pre:(list blindedWord){
     (exists(s: systemState #n).
       pre = get_operands #n #32 (sample_decoder inst).input_operands s) /\
       FStar.List.length pre = FStar.List.length (sample_decoder inst).input_operands}):
 
-    Lemma (requires parse_opcode inst = 3)
+    Lemma (requires parse_opcode inst = 3 /\ ~(InconsistentlyBlinded? (blindedness_state_of_list pre)))
           (ensures  unwrap (FStar.List.Tot.hd
                              (sample_semantics #n (sample_decoder inst) pre).register_writes)
                      = (FStar.UInt64.add_mod (unwrap (FStar.List.Tot.index pre 0))
@@ -354,11 +377,11 @@ let xor_with_self_yields_zero (a:Cpu.word):
 /// Then we show that the computed value really is the exclusive OR of the inputs.
 let xor_instruction_works_correctly
       (#n:memory_size) (inst:word)
-      (pre:(list (maybeBlinded #word)){
+      (pre:(list blindedWord){
         (exists(s: systemState #n).
           pre = get_operands #n #32 (sample_decoder inst).input_operands s) /\
           FStar.List.length pre = FStar.List.length (sample_decoder inst).input_operands}):
-    Lemma (requires parse_opcode inst = 7)
+    Lemma (requires parse_opcode inst = 7  /\ ~(InconsistentlyBlinded? (blindedness_state_of_list pre)))
           (ensures  unwrap (FStar.List.Tot.hd
                              (sample_semantics #n (sample_decoder inst) pre).register_writes)
                      = FStar.UInt64.logxor (unwrap (FStar.List.Tot.index pre 0))
@@ -371,7 +394,10 @@ let xor_instruction_works_correctly
               = (FStar.List.Tot.index di.input_operands 1) then (
             assert(a == b);
             xor_with_self_yields_zero (unwrap a) )
-          else if any_value_is_blinded pre then
-            assert(outputs = [Blinded (FStar.UInt64.logxor (unwrap a) (unwrap b))])
-          else
-            assert(outputs = [Clear (FStar.UInt64.logxor (unwrap a) (unwrap b))])
+          else (
+            let bs = blindedness_state_of_list pre in
+            match bs with
+                | ConsistentlyBlinded d -> assert(outputs = [MultiBlinded (FStar.UInt64.logxor (unwrap a) (unwrap b)) d])
+                | NoneBlinded -> assert(outputs = [MultiClear (FStar.UInt64.logxor (unwrap a) (unwrap b))])
+          )
+

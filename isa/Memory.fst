@@ -6,6 +6,7 @@
 module Memory
 
 open Value
+open Multi
 
 /// First we require a model of addresses and words.  We use a 64-bit word
 /// so that there is one instruction per word.
@@ -13,14 +14,15 @@ type address = FStar.UInt64.t
 type byte = FStar.UInt64.t
 
 /// Then, we define the state of memory as a list of blindable words.
-type memoryState = list (maybeBlinded #byte)
+type blindedWord = multiBlinded #byte
+type memoryState = list blindedWord
 
 /// We then provide a way to read values from memory.  Rather than requiring
 /// the caller to prove that their address is in range, reading from an
 /// out-of-range value results in reading a blinded value zero.
-let rec nth (m:list (maybeBlinded #byte)) (n:address) : maybeBlinded #byte =
+let rec nth (m:memoryState) (n:address) : blindedWord =
   match m, n with
-    | Nil,     _   -> Blinded 0uL
+    | Nil,     _   -> MultiBlinded 0uL 0
     | hd :: tl, 0uL -> hd
     | hd :: tl, n   -> nth tl (FStar.UInt64.sub n 1uL)
 
@@ -47,7 +49,7 @@ irreducible let trigger (a b: memoryState) (n:address) = True
 
 let rec equivalent_memories_have_identical_blindedness_somewhere (a b: memoryState) (n:address):
   Lemma (requires equiv_list a b)
-        (ensures Blinded? (nth a n) <==> Blinded? (nth b n))
+        (ensures is_blinded (nth a n) <==> is_blinded (nth b n))
         [SMTPat (trigger a b n)]=
   match n, a, b with
     | 0uL, _, _ -> ()

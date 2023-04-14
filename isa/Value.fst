@@ -11,12 +11,15 @@ class blinded_data_representation (outer:eqtype) = {
   equiv: outer -> outer -> bool;
   is_blinded: outer -> bool;
   redact: outer -> inner -> outer;
+  unwrap: outer -> inner;
+  make_clear: inner -> outer;
   [@@@FStar.Tactics.Typeclasses.no_method]
   properties: squash (
     (forall (x y: outer). x = y ==> equiv x y) /\
     (forall (x y: outer). equiv x y <==> equiv y x) /\
     (forall (x y z: outer). equiv x y /\ equiv y z ==> equiv x z) /\
-    (forall (x: outer) (d: inner). equiv x (redact x d))
+    (forall (x: outer) (d: inner). equiv x (redact x d)) /\
+    (forall (x y: outer) (d: inner). equiv x y <==> redact x d = redact y d)
   )
 }
 
@@ -30,7 +33,7 @@ type maybeBlinded (#t:Type) =
 
 /// But since most software is not written with knowledge of blindable values,
 /// we need a way to unwrap the blindable value and get the value inside.
-let unwrap (#t:Type) (mb:maybeBlinded #t): t =
+let unwrap1 (#t:Type) (mb:maybeBlinded #t): t =
   match mb with
    | Clear v -> v
    | Blinded v -> v
@@ -119,7 +122,9 @@ instance single_bit_blinding (#t:eqtype) : blinded_data_representation (maybeBli
   equiv = equiv1;
   is_blinded = (fun (x: maybeBlinded #t) -> Blinded? x);
   redact = redact1;
-  properties =  ()
+  unwrap = unwrap1;
+  properties =  ();
+  make_clear = Clear
 }
 
 
@@ -204,7 +209,7 @@ let rec all_values_are_blinded #t {| blinded_data_representation t |} (l: list t
     | hd :: tl -> if not (is_blinded hd) then false else all_values_are_blinded tl
     | _ -> true
 
-let rec lists_of_blinded_values_of_equal_length_are_equivalent (#t:eqtype) (a b: list (maybeBlinded #t)):
+let rec lists_of_blinded_values_of_equal_length_are_equivalent #t {| blinded_data_representation t |} (a b: list (maybeBlinded #t)):
   Lemma (requires (FStar.List.length a = FStar.List.length b)
                 /\ (all_values_are_blinded a) /\ (all_values_are_blinded b))
         (ensures equiv_list a b) =
@@ -221,18 +226,24 @@ let rec any_value_is_blinded #t {| blinded_data_representation t |} (l: list t) 
     | hd :: tl -> if is_blinded hd then true else any_value_is_blinded #t tl
     | _ -> false
 
+let rec equivalent_lists_have_identical_any_blindedness #t {| blinded_data_representation t |} (a b: list t):
+  Lemma (requires (equiv_list a b))
+        (ensures (any_value_is_blinded a) = (any_value_is_blinded b))
+  = match a, b with
+      | hl::tl, hr::tr -> equivalent_lists_have_identical_any_blindedness tl tr
+      | _ -> ()
 
 
 /// We can also define redaction on lists, by redacting each of their elements.
-let rec redact_list (#t:eqtype) (pre:list (maybeBlinded #t)) (d:t):
-                r:(list (maybeBlinded #t)){FStar.List.length r = FStar.List.length pre}
+let rec redact_list #t {| blinded_data_representation t |} (pre:list t) (d: (inner #t)):
+                r:(list t){FStar.List.length r = FStar.List.length pre}
     = match pre with
       | Nil         -> Nil
       | head :: tail -> (redact head d) :: (redact_list tail d)
 
 
 /// This doesn't affect the length of the list:
-let rec redaction_preserves_length (t:eqtype) (x:list(maybeBlinded #t)) (d:t)
+let rec redaction_preserves_length t {| blinded_data_representation t |} (x:list t) (d: (inner #t))
   : Lemma (ensures FStar.List.length x = FStar.List.length (redact_list x d))
   = match x with
     | Nil -> ()
@@ -242,14 +253,14 @@ let rec redaction_preserves_length (t:eqtype) (x:list(maybeBlinded #t)) (d:t)
 /// We prove the same properties as for the redactions of individual values.
 ///
 /// First, the redaction of a list is in the same equivalence class.
-let rec lists_are_equivalent_to_their_redaction (t:eqtype) (x: list(maybeBlinded #t)) (d:t)
+let rec lists_are_equivalent_to_their_redaction t {| blinded_data_representation t |} (x:list t) (d: (inner #t))
     : Lemma (ensures equiv_list x (redact_list x d))
     = match x with
       | Nil -> ()
       | hd :: tl -> lists_are_equivalent_to_their_redaction t tl d
 
 /// The redaction of lists of lists are equal if and only if they are equivalent.
-let rec equivalent_lists_have_equal_redactions (t:eqtype) (x y: list(maybeBlinded #t)) (d:t)
+let rec equivalent_lists_have_equal_redactions t {| blinded_data_representation t |} (x y: list t) (d: (inner #t))
     : Lemma (ensures equiv_list x y <==> redact_list x d = redact_list y d)
     = match x, y with
        | Nil, Nil -> ()
@@ -258,9 +269,9 @@ let rec equivalent_lists_have_equal_redactions (t:eqtype) (x y: list(maybeBlinde
        | hl :: tl, hr :: tr -> equivalent_lists_have_equal_redactions t tl tr d
 
 /// Redacting a list redacts each of its values.
-let rec redacted_lists_have_redacted_values (t:eqtype)
-                                            (a: list (maybeBlinded #t))
-                                            (d:t)
+let rec redacted_lists_have_redacted_values (t:eqtype) {| blinded_data_representation t |}
+                                            (a: list t)
+                                            (d: (inner #t))
                                             (n: nat{n < FStar.List.length a}):
   Lemma (ensures FStar.List.Tot.index (redact_list a d) n = redact (FStar.List.Tot.index a n) d)
         [SMTPat (FStar.List.Tot.index (redact_list a d) n)]

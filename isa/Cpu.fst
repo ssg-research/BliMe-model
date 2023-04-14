@@ -117,20 +117,24 @@ let system_equivalence_is_symmetric (#m #q #n #r: memory_size)
 /// We introduce the concept of *redaction*, which is to zero all of the data in
 /// blinded values of the system.
 let redact_system (#n #r: memory_size) (s:systemState #n #r): systemState #n #r = {
-    pc = (redaction_preserves_length _ s.memory 0uL;
-          let redacted_memory = redact_list s.memory 0uL in
+    pc = (let zero: (inner #blindedWord) = 0uL in
+          redaction_preserves_length _ s.memory zero;
+          let redacted_memory = redact_list s.memory zero in
           s.pc);
     cache_lines = s.cache_lines;
-    registers = (redaction_preserves_length _ s.registers 0uL;
-                 redact_list s.registers 0uL);
-    memory    = redact_list s.memory 0uL
+    registers = (let zero: (inner #blindedWord) = 0uL in
+                 redaction_preserves_length _ s.registers zero;
+                 redact_list s.registers zero);
+    memory    = let zero: (inner #blindedWord) = 0uL in
+                redact_list s.memory zero
     }
 
 /// We then prove that systems are equivalent to their redaction:
 let systems_are_equivalent_to_their_redaction (#n #r: memory_size) (s:systemState #n #r):
     Lemma (ensures equiv_system s (redact_system s))
-    = lists_are_equivalent_to_their_redaction  _ s.registers 0uL;
-      lists_are_equivalent_to_their_redaction  _ s.memory 0uL
+    = let zero: (inner #blindedWord) = 0uL in
+      lists_are_equivalent_to_their_redaction  _ s.registers zero;
+      lists_are_equivalent_to_their_redaction  _ s.memory zero
 
 /// and that the redactions of equivalent systems are equal:
 
@@ -139,8 +143,9 @@ let equivalent_systems_have_equal_redactions (#m #q #n #r: memory_size)
                                              (s2:systemState #n #r):
     Lemma (requires (equiv_system s1 s2)) (ensures ((redact_system s1) == (redact_system s2)))
     = assert(m = n);
-      equivalent_lists_have_equal_redactions _ s1.registers s2.registers 0uL;
-      equivalent_lists_have_equal_redactions _ s1.memory s2.memory 0uL
+      let zero: (inner #blindedWord) = 0uL in
+      equivalent_lists_have_equal_redactions _ s1.registers s2.registers zero;
+      equivalent_lists_have_equal_redactions _ s1.memory s2.memory zero
 
 /// Together, these theorems let us more easily prove theorems of the form
 ///
@@ -190,9 +195,9 @@ val step (#n #r:memory_size)
 
 let step exec pre_state =
     let instruction = Memory.nth pre_state.memory pre_state.pc in
-        match instruction with
-        | Blinded _ -> { pre_state with pc = 0uL }
-        | Clear inst -> exec inst pre_state
+        match is_blinded instruction with
+        | true -> { pre_state with pc = 0uL }
+        | false -> exec (unwrap instruction) pre_state
 
 
 /// ==================
