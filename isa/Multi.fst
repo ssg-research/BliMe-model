@@ -8,21 +8,26 @@ module Multi
 open Value
 
 /// The goal here is to show that we can transform a single-domain architecture
-/// into a multi-domain one without sacrificing security.
+/// blindedness_domaino a multi-domain one without sacrificing security.
 ///
 /// ^^^^^^^^^^^
 /// Definitions
 /// ^^^^^^^^^^^
-///
+
+type blindedness_domain = x:FStar.UInt8.t{~(x = FStar.UInt8.zero)}
+
 /// The ``multiBlinded`` type represents a type that may be blinded with any
 /// of several blindedness domains.
 type multiBlinded (#t:Type) =
-  | MultiClear   : v:t            -> multiBlinded #t
-  | MultiBlinded : (v:t) -> (d:int) -> multiBlinded #t
+  | MultiClear   : v:t
+                 -> multiBlinded #t
+  | MultiBlinded : v:t
+                 -> d:blindedness_domain
+                 -> multiBlinded #t
 
 /// Convert a multiBlinded to a maybeBlinded by considering only blindedness
 /// with respect to a single domain.
-let for_domain (#t:Type) (d:int) (m: multiBlinded #t): maybeBlinded #t =
+let for_domain (#t:Type) (d:blindedness_domain) (m: multiBlinded #t): maybeBlinded #t =
   match m with
   | MultiClear v     -> Clear v
   | MultiBlinded v d -> Blinded v
@@ -30,7 +35,7 @@ let for_domain (#t:Type) (d:int) (m: multiBlinded #t): maybeBlinded #t =
 
 /// Define a new notion of equivalence that applies to multi-domain
 /// blinded values.
-let domainwise_equiv (#t:eqtype) (d:int) (x y: multiBlinded #t) = equiv (for_domain d x) (for_domain d y)
+let domainwise_equiv (#t:eqtype) (d:blindedness_domain) (x y: multiBlinded #t) = equiv (for_domain d x) (for_domain d y)
 
 let multi_bit_equiv  (#t:eqtype) (x y: multiBlinded #t)
     = match x, y with
@@ -55,17 +60,17 @@ let multi_bit_unwrap (#t:eqtype) (x: multiBlinded #t)
 ///  - **Reflexivity**
 let equal_values_are_equivalent (t:eqtype) (lhs rhs:multiBlinded #t):
   Lemma (requires lhs = rhs)
-        (ensures forall (d:int). domainwise_equiv d lhs rhs) =
+        (ensures forall (d:blindedness_domain). domainwise_equiv d lhs rhs) =
   ()
 
 ///  - **Symmetry**
-let equivalence_is_symmetric (t:eqtype) (d:int) (lhs rhs: multiBlinded #t):
+let equivalence_is_symmetric (t:eqtype) (d:blindedness_domain) (lhs rhs: multiBlinded #t):
     Lemma (requires domainwise_equiv d lhs rhs)
           (ensures  domainwise_equiv d rhs lhs)
     = ()
 
 ///  - **Transitivity**
-let equivalence_is_transitive (t:eqtype) (d:int) (lhs mid rhs:multiBlinded #t):
+let equivalence_is_transitive (t:eqtype) (d:blindedness_domain) (lhs mid rhs:multiBlinded #t):
     Lemma (requires (domainwise_equiv d lhs mid) /\ (domainwise_equiv d mid rhs))
           (ensures   domainwise_equiv d lhs rhs)
     = ()
@@ -73,7 +78,7 @@ let equivalence_is_transitive (t:eqtype) (d:int) (lhs mid rhs:multiBlinded #t):
 /// Finally, we show that equivalence on non-blinded values is just the
 /// normal equality relation.
 let equivalent_clear_values_are_equal (t:eqtype) (x y:multiBlinded #t):
-    Lemma (requires MultiClear? x /\ MultiClear? y /\ (exists (d:int). domainwise_equiv d x y))
+    Lemma (requires MultiClear? x /\ MultiClear? y /\ (exists (d:blindedness_domain). domainwise_equiv d x y))
           (ensures x = y)
     = ()
 

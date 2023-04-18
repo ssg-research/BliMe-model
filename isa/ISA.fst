@@ -128,7 +128,7 @@ let sample_decoded_instruction_length (inst:word):
 
 type blindedness_state =
   | NoneBlinded : blindedness_state
-  | ConsistentlyBlinded : int -> blindedness_state
+  | ConsistentlyBlinded : blindedness_domain -> blindedness_state
   | InconsistentlyBlinded : blindedness_state
 
 let rec blindedness_state_of_list_int (l : list blindedWord) (s : blindedness_state) : blindedness_state =
@@ -146,13 +146,13 @@ let rec blindedness_state_of_list_int (l : list blindedWord) (s : blindedness_st
 let blindedness_state_of_list (l : list blindedWord) : blindedness_state =
   blindedness_state_of_list_int l NoneBlinded
 
-let rec blind_all_values (values: list blindedWord) (d: int): r:(list blindedWord){FStar.List.length values = FStar.List.length r} =
+let rec blind_all_values (values: list blindedWord) (d: blindedness_domain): r:(list blindedWord){FStar.List.length values = FStar.List.length r} =
     match values with
       | Nil                     -> Nil
       | MultiBlinded hd dx :: tl -> MultiBlinded hd dx :: blind_all_values tl d
       | MultiClear   hd    :: tl -> MultiBlinded hd d :: blind_all_values tl d
 
-let rec blinding_all_values_blinds_each_value (values: list blindedWord) (d: int) (n:nat{n < FStar.List.length values}):
+let rec blinding_all_values_blinds_each_value (values: list blindedWord) (d: blindedness_domain) (n:nat{n < FStar.List.length values}):
   Lemma (ensures is_blinded (FStar.List.Tot.index (blind_all_values values d) n))
         [SMTPat (is_blinded (FStar.List.Tot.index (blind_all_values values d) n))] =
   match n, values with
@@ -161,13 +161,13 @@ let rec blinding_all_values_blinds_each_value (values: list blindedWord) (d: int
     | n, hd :: tl -> blinding_all_values_blinds_each_value tl d (n-1)
 
 
-let rec blinding_all_values_is_idempotent  (values: list blindedWord) (d:int):
+let rec blinding_all_values_is_idempotent  (values: list blindedWord) (d: blindedness_domain):
   Lemma (ensures (blind_all_values values d) = blind_all_values (blind_all_values values d) d) =
     match values with
       | hd :: tl -> blinding_all_values_is_idempotent tl d
       | _ -> ()
 
-let rec blinding_all_values_blinds_all_values  (values: list blindedWord) (d:int):
+let rec blinding_all_values_blinds_all_values  (values: list blindedWord) (d: blindedness_domain):
   Lemma (ensures all_values_are_blinded (blind_all_values values d))
         [SMTPat (blind_all_values values d)] =
   match values with

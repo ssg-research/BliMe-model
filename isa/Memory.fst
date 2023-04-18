@@ -19,10 +19,10 @@ type memoryState = list blindedWord
 
 /// We then provide a way to read values from memory.  Rather than requiring
 /// the caller to prove that their address is in range, reading from an
-/// out-of-range value results in reading a blinded value zero.
+/// out-of-range value results in reading a clear value zero.
 let rec nth (m:memoryState) (n:address) : blindedWord =
   match m, n with
-    | Nil,     _   -> MultiBlinded 0uL 0
+    | Nil,     _   -> MultiClear 0uL
     | hd :: tl, 0uL -> hd
     | hd :: tl, n   -> nth tl (FStar.UInt64.sub n 1uL)
 
