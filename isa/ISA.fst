@@ -211,28 +211,28 @@ let sample_semantics (di:decoder_output sample_decoder)
     (* Store *)
     | 0 -> let address = (FStar.List.Tot.index pre 0) in
 
-    { register_writes = []; memory_ops = if is_blinded address then [] else (
+    { register_writes = []; memory_ops = (
       assert(FStar.List.length di.input_operands = 2);
       match (FStar.List.Tot.index di.input_operands 0), (FStar.List.Tot.index di.input_operands 1) with
         | Register d, Register s -> [Store (v (unwrap address)) s]
         | _ -> []
-      )}
+      ); fault = is_blinded address}
     (* Load *)
     | 1 -> let address = (FStar.List.Tot.index pre 0) in
           { register_writes = [];
-            memory_ops = if is_blinded address
-                         then []
-                         else match (FStar.List.Tot.index di.input_operands 0),
-                                    (FStar.List.Tot.index di.input_operands 1) with
-                               | Register d, Register s -> [Load (v (unwrap address)) d]
-                               | _ -> []}
+            memory_ops = (match (FStar.List.Tot.index di.input_operands 0),
+                                     (FStar.List.Tot.index di.input_operands 1) with
+                                | Register d, Register s -> [Load (v (unwrap address)) d]
+                                | _ -> []);
+            fault = is_blinded address}
     (* Branch *)
     | 2 -> ( let pc = FStar.List.Tot.index pre 0 in
             let a = FStar.List.Tot.index pre 1 in
             let b = FStar.List.Tot.index pre 2 in
             let ref: blindedWord = MultiClear #word 0uL in
-            { register_writes = [if is_blinded a then make_clear 0uL else if a = ref then b else pc];
-              memory_ops = [] })
+            { register_writes = [if a = ref then b else pc];
+              memory_ops = [];
+              fault = is_blinded a})
     (* Add *)
     | 3 -> ( assert(FStar.List.length pre = 3);
             let a = FStar.List.Tot.index pre 0 in
@@ -243,7 +243,8 @@ let sample_semantics (di:decoder_output sample_decoder)
                           | ConsistentlyBlinded d -> MultiBlinded result d
                           | InconsistentlyBlinded -> make_clear 0uL in
             { register_writes = [result];
-              memory_ops = [] })
+              memory_ops = [];
+              fault = InconsistentlyBlinded? (blindedness_state_of_list pre)})
     (* Sub *)
     | 4 -> ( assert(FStar.List.length pre = 2);
             let a = FStar.List.Tot.index pre 0 in
@@ -254,7 +255,8 @@ let sample_semantics (di:decoder_output sample_decoder)
                           | ConsistentlyBlinded d -> MultiBlinded result d
                           | InconsistentlyBlinded -> make_clear 0uL in
             { register_writes = [result];
-              memory_ops = [] })
+              memory_ops = [];
+              fault = InconsistentlyBlinded? (blindedness_state_of_list pre) })
     (* MUL *)
     | 5 -> ( assert(FStar.List.length pre = 2);
             let a = FStar.List.Tot.index pre 0 in
@@ -265,7 +267,8 @@ let sample_semantics (di:decoder_output sample_decoder)
                           | ConsistentlyBlinded d -> MultiBlinded result d
                           | InconsistentlyBlinded -> make_clear 0uL in
            { register_writes = [result];
-             memory_ops = [] })
+             memory_ops = [];
+              fault = InconsistentlyBlinded? (blindedness_state_of_list pre) })
     (* AND *)
     | 6 -> ( assert(FStar.List.length pre = 2);
             let a = FStar.List.Tot.index pre 0 in
@@ -278,7 +281,8 @@ let sample_semantics (di:decoder_output sample_decoder)
                           | ConsistentlyBlinded d -> MultiBlinded result d
                           | InconsistentlyBlinded -> make_clear 0uL in
                          { register_writes = [result];
-                           memory_ops = [];}
+                           memory_ops = [];
+                           fault = InconsistentlyBlinded? (blindedness_state_of_list pre)}
           )
     (* XOR *)
     | 7 -> ( assert(FStar.List.length pre = 2);
@@ -293,7 +297,8 @@ let sample_semantics (di:decoder_output sample_decoder)
                           | ConsistentlyBlinded d -> MultiBlinded result d
                           | InconsistentlyBlinded -> make_clear 0uL in
                          { register_writes = [result];
-                           memory_ops = [];}
+                           memory_ops = [];
+                           fault = InconsistentlyBlinded? (blindedness_state_of_list pre)}
           )
 
 irreducible let trigger (#n: memory_size)

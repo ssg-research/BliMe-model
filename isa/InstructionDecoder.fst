@@ -588,14 +588,17 @@ type decoder_output (d:decoder) = (di:decodedInstruction{exists(inst:word). di =
 type instruction_result (di:decodedInstruction) = {
   register_writes: (vals:(list  blindedWord){
                      FStar.List.length vals = FStar.List.length di.output_operands});
-  memory_ops: (list memory_operation)
+  memory_ops: (list memory_operation);
+  fault: bool
 }
 
 /// We can then define an equivalence relation on instruction results to see
 /// whether they leak information:
-let equiv_result (#di:decodedInstruction) (lhs rhs:(instruction_result di)) =
-    (equiv_list lhs.register_writes rhs.register_writes)
-  /\ (equiv_memory_operations lhs.memory_ops rhs.memory_ops)
+let equiv_result (#di:decodedInstruction) (lhs rhs:(instruction_result di)) = (
+      (equiv_list lhs.register_writes rhs.register_writes)
+    /\ (equiv_memory_operations lhs.memory_ops rhs.memory_ops)
+    /\ lhs.fault = false /\ rhs.fault = false)
+  \/ (lhs.fault = true /\ rhs.fault = true)
 
 /// Then we define the usual bevy of properties:
 ///  - **Equality implies equivalence**:
@@ -609,15 +612,22 @@ let equal_results_are_equivalent (#di:decodedInstruction) (lhs rhs:(instruction_
 let result_equivalence_is_symmetric (#di:decodedInstruction) (lhs rhs:(instruction_result di)):
   Lemma (requires equiv_result lhs rhs)
         (ensures equiv_result rhs lhs) =
-  list_equivalence_is_symmetric blindedWord lhs.register_writes rhs.register_writes;
-  memory_operation_list_equivalence_is_symmetric lhs.memory_ops rhs.memory_ops
+  assert(lhs.fault = rhs.fault);
+  if lhs.fault = false then (
+    list_equivalence_is_symmetric blindedWord lhs.register_writes rhs.register_writes;
+    memory_operation_list_equivalence_is_symmetric lhs.memory_ops rhs.memory_ops)
+  else
+    ()
 
 ///  - **Transitivity**
 let result_equivalence_is_transitive (#di:decodedInstruction) (lhs mid rhs:(instruction_result di)):
   Lemma (requires (equiv_result lhs mid) /\ (equiv_result mid rhs))
         (ensures  (equiv_result lhs rhs)) =
-  list_equivalence_is_transitive blindedWord lhs.register_writes mid.register_writes rhs.register_writes;
-  memory_operation_list_equivalence_is_transitive lhs.memory_ops mid.memory_ops rhs.memory_ops
+  assert(lhs.fault = mid.fault && mid.fault = rhs.fault);
+  if lhs.fault = false then (
+    list_equivalence_is_transitive blindedWord lhs.register_writes mid.register_writes rhs.register_writes;
+    memory_operation_list_equivalence_is_transitive lhs.memory_ops mid.memory_ops rhs.memory_ops)
+  else ()
 
 /// ------
 /// Inputs
@@ -721,6 +731,7 @@ let loadstore_execution_unit (#n #r: memory_size)
     let decoded = d inst in
     let input_operand_values = (get_operands decoded.input_operands pre) in
     let instruction_output = (s decoded input_operand_values) in
+    if instruction_output.fault then { pre with pc = 0uL } else
     let output_operand_values = instruction_output.register_writes in
     let pre_with_incremented_pc =
           { pre with pc = (
@@ -784,59 +795,67 @@ let loadstore_execution_unit_with_re_instruction_semantics_is_redacting_equivale
 
       assert(equiv_result instruction_output redacted_instruction_output);
 
-      let zero : (inner #blindedWord) = 0uL in
-      lists_are_equivalent_to_their_redaction blindedWord input_operand_values zero;
+      assert(instruction_output.fault = redacted_instruction_output.fault);
+      if instruction_output.fault then
+        (
+          let post_with_fault = { pre with pc = 0uL } in
+          let post_redacted_with_fault = { (redact_system pre) with pc = 0uL } in
+          assert(equiv_system #n #r #n #r post_with_fault post_redacted_with_fault)
+        )
+      else (
+        let zero : (inner #blindedWord) = 0uL in
+        lists_are_equivalent_to_their_redaction blindedWord input_operand_values zero;
 
-      assert(equiv_list input_operand_values (get_operands decoded.input_operands (redact_system pre)));
+        assert(equiv_list input_operand_values (get_operands decoded.input_operands (redact_system pre)));
 
-      list_equivalence_is_symmetric blindedWord input_operand_values redacted_input_operand_values;
-      assert(equiv_list redacted_input_operand_values input_operand_values);
-      list_equivalence_is_transitive blindedWord redacted_input_operand_values
-        input_operand_values
-        (get_operands decoded.input_operands (redact_system pre));
+        list_equivalence_is_symmetric blindedWord input_operand_values redacted_input_operand_values;
+        assert(equiv_list redacted_input_operand_values input_operand_values);
+        list_equivalence_is_transitive blindedWord redacted_input_operand_values
+          input_operand_values
+          (get_operands decoded.input_operands (redact_system pre));
 
-      assert(equiv_list redacted_input_operand_values
-                        (get_operands decoded.input_operands (redact_system pre)));
+        assert(equiv_list redacted_input_operand_values
+                          (get_operands decoded.input_operands (redact_system pre)));
 
-      assert(equiv_list instruction_output.register_writes redacted_instruction_output.register_writes);
+        assert(equiv_list instruction_output.register_writes redacted_instruction_output.register_writes);
 
-      let post1 = set_operands decoded.output_operands
-                               instruction_output.register_writes
-                               pre_with_incremented_pc in
-      let post_redacted1 = set_operands decoded.output_operands
-                                        redacted_instruction_output.register_writes
-                                        (redact_system pre_with_incremented_pc) in
+        let post1 = set_operands decoded.output_operands
+                                 instruction_output.register_writes
+                                 pre_with_incremented_pc in
+        let post_redacted1 = set_operands decoded.output_operands
+                                          redacted_instruction_output.register_writes
+                                          (redact_system pre_with_incremented_pc) in
 
-      systems_are_equivalent_to_their_redaction pre_with_incremented_pc;
-      assert(equiv_system pre_with_incremented_pc (redact_system pre_with_incremented_pc));
+        systems_are_equivalent_to_their_redaction pre_with_incremented_pc;
+        assert(equiv_system pre_with_incremented_pc (redact_system pre_with_incremented_pc));
 
-      setting_equivalent_operand_values_on_equivalent_systems_yields_equivalent_systems
-        decoded.output_operands instruction_output.register_writes
-        redacted_instruction_output.register_writes
-        pre_with_incremented_pc
-        (redact_system pre_with_incremented_pc);
+        setting_equivalent_operand_values_on_equivalent_systems_yields_equivalent_systems
+          decoded.output_operands instruction_output.register_writes
+          redacted_instruction_output.register_writes
+          pre_with_incremented_pc
+          (redact_system pre_with_incremented_pc);
 
-      assert(equiv_system post1 post_redacted1);
+        assert(equiv_system post1 post_redacted1);
 
-      let post2: systemState #n #r = complete_memory_transactions instruction_output.memory_ops
-                                                                  post1
-                                                                  cp in
-      let post_redacted2: systemState #n #r =
-        complete_memory_transactions redacted_instruction_output.memory_ops post_redacted1 cp in
+        let post2: systemState #n #r = complete_memory_transactions instruction_output.memory_ops
+                                                                    post1
+                                                                    cp in
+        let post_redacted2: systemState #n #r =
+          complete_memory_transactions redacted_instruction_output.memory_ops post_redacted1 cp in
 
-      assert(equiv_memory_operations instruction_output.memory_ops
-                                     redacted_instruction_output.memory_ops);
-      equivalent_memory_operation_lists_have_equal_length
-        instruction_output.memory_ops redacted_instruction_output.memory_ops;
+        assert(equiv_memory_operations instruction_output.memory_ops
+                                       redacted_instruction_output.memory_ops);
+        equivalent_memory_operation_lists_have_equal_length
+          instruction_output.memory_ops redacted_instruction_output.memory_ops;
 
-      completing_equivalent_memory_transactions_on_equivalent_systems_yields_equivalent_systems
-        instruction_output.memory_ops
-        redacted_instruction_output.memory_ops
-        post1
-        post_redacted1
-        cp;
-
-      assert(equiv_system post2 post_redacted2)
+        completing_equivalent_memory_transactions_on_equivalent_systems_yields_equivalent_systems
+          instruction_output.memory_ops
+          redacted_instruction_output.memory_ops
+          post1
+          post_redacted1
+          cp;
+        assert(equiv_system post2 post_redacted2)
+    )
 
 /// Next, that it is redacting equivalent for all instructions and system states.
 let loadstore_execution_unit_with_re_instruction_semantics_is_redacting_equivalent
