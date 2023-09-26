@@ -181,7 +181,6 @@ let equivalent_systems_have_equal_redactions (#m #q #n #r: memory_size)
 ///
 /// - an execution unit (essentially, an ISA)
 ///
-///   .. fst ::
 type execution_unit (#n #r:memory_size) = word -> systemState #n #r -> systemState #n #r
 
 /// - a function that "steps" the processor state, which in this case

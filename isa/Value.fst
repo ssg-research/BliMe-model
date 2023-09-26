@@ -6,6 +6,8 @@
 /// on them.
 module Value
 
+/// First, we define what a "blindable" value should look like, so that many
+/// different data representations can be used in our proofs.
 class blinded_data_representation (outer:eqtype) = {
   inner: eqtype;
   equiv: outer -> outer -> bool;
@@ -117,6 +119,7 @@ let equivalent_values_have_equal_redactions (t:eqtype) (x y:maybeBlinded #t) (d:
     Lemma (ensures equiv1 x y <==> redact1 x d = redact1 y d)
     = ()
 
+/// Now we can say that this maybeBlinded is a blinded_data_representation.
 instance single_bit_blinding (#t:eqtype) : blinded_data_representation (maybeBlinded #t) = {
   inner = t;
   equiv = equiv1;
@@ -283,25 +286,3 @@ let rec redacted_lists_have_redacted_values (t:eqtype) {| blinded_data_represent
       | _ -> ()
 
 
-
-// let props t {| blinded_data_representation t |} : Lemma (ensures (
-//     (forall (x y: list t). x = y ==> equiv_list x y) /\
-//     (forall (x y: list t). equiv_list x y <==> equiv_list y x) /\
-//     (forall (x y z: list t). equiv_list x y /\ equiv_list y z ==> equiv_list x z)
-//   )) =
-//     let lem1 lhs rhs : Lemma (lhs = rhs ==> equiv_list lhs rhs) = FStar.Classical.move_requires (equal_lists_are_equivalent t lhs) rhs in
-//     FStar.Classical.forall_intro_2 lem1;
-//     assert(forall (x y: list t). x = y ==> equiv_list x y); // by (
-//     assert(forall (x y: list t). equiv_list x y <==> equiv_list y x);
-
-//     let lem3 lhs mid rhs : Lemma (equiv_list lhs mid /\ equiv_list mid rhs ==> equiv_list lhs rhs) = FStar.Classical.move_requires (list_equivalence_is_transitive t lhs mid) rhs in
-//     FStar.Classical.forall_intro_3 lem3;
-//     assert(forall (x y z: list t). equiv_list x y /\ equiv_list y z ==> equiv_list x z);
-//     ()
-
-
-// instance list_blinding (#t:eqtype) : blinded_data_representation (list (maybeBlinded #t)) = {
-//   equiv = equiv_list;
-//   is_blinded = (fun x -> (true == all_values_are_blinded t x));
-//   properties = props t
-// }

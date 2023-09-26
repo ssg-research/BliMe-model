@@ -7,9 +7,6 @@ module Multi
 
 open Value
 
-/// The goal here is to show that we can transform a single-domain architecture
-/// blindedness_domaino a multi-domain one without sacrificing security.
-///
 /// ^^^^^^^^^^^
 /// Definitions
 /// ^^^^^^^^^^^
@@ -75,13 +72,14 @@ let equivalence_is_transitive (t:eqtype) (d:blindedness_domain) (lhs mid rhs:mul
           (ensures   domainwise_equiv d lhs rhs)
     = ()
 
-/// Finally, we show that equivalence on non-blinded values is just the
+/// Next, we show that equivalence on non-blinded values is just the
 /// normal equality relation.
 let equivalent_clear_values_are_equal (t:eqtype) (x y:multiBlinded #t):
     Lemma (requires MultiClear? x /\ MultiClear? y /\ (exists (d:blindedness_domain). domainwise_equiv d x y))
           (ensures x = y)
     = ()
 
+/// Finally, we show that `multiBlinded` is a blinded_data_representation.
 instance multi_bit_blinding (#inner:eqtype) : blinded_data_representation (multiBlinded #inner) = {
   inner = inner;
   equiv = multi_bit_equiv;
@@ -91,25 +89,3 @@ instance multi_bit_blinding (#inner:eqtype) : blinded_data_representation (multi
   make_clear = MultiClear;
   properties =  ()
 }
-
-/// ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-/// Single- to multi-domain transformation
-/// ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-///
-/// Now we come up with a description of a multi-domain BliMe machine.  In the
-/// single-domain case, an output is blinded if any inputs are blinded.  In the
-/// multi-domain case, we look at all inputs for the computation, and there are
-/// three possible cases:
-///
-///   1. No inputs are blinded, so no outputs are blinded
-///
-///   2. Inputs contain blinded data from one domain, so the output is blinded
-///      with the same domain.
-///
-///   3. Inputs contain blinded data from multiple domains, so the computation
-///      fails.
-///
-/// ### Security properties
-
-
-

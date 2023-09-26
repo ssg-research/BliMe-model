@@ -120,11 +120,6 @@ let sample_decoded_instruction_length (inst:word):
 /// -----------------
 /// Utility functions
 /// -----------------
-// let rec any_value_is_blinded (values: list blindedWord): bool =
-//   match values with
-//    | Nil              -> false
-//    | Blinded(hd) :: _  -> true
-//    | Clear(hd)   :: tl -> any_value_is_blinded tl
 
 type blindedness_state =
   | NoneBlinded : blindedness_state
@@ -190,7 +185,7 @@ let rec equivalent_unblinded_lists_are_equal (a b: list blindedWord):
 ///
 /// In most cases we use a 'generic' taint propagation rule:
 ///
-/// .. example ::
+/// .. exercise ::
 ///
 ///      if any_value_is_blinded pre then Blinded result else Clear result
 ///
