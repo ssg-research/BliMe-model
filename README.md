@@ -5,7 +5,7 @@ This directory contains a formal model of BliMe's taint-tracking policy written 
 
 You can verify the proofs by running 
 
-"""console
+```console
 $ docker build -t blime-model .
 $ docker run -it blime-model 
 [WARNING] Running as root is not recommended
@@ -16,6 +16,6 @@ Verified module: Cpu
 Verified module: InstructionDecoder
 Verified module: ISA
 All verification conditions discharged successfully
-"""
+```
 
 More details on the proofs themselves can be found [here](https://blinded-computation.github.io/blime-model/).
